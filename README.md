@@ -2,6 +2,8 @@
 
 A production-grade **Retrieval-Augmented Generation (RAG)** system demonstrating advanced LangChain integration with MongoDB Atlas Vector Search and Llama 3.2.
 
+![MongoDB RAG System Demo](demo.png)
+
 ## 🎯 Project Overview
 
 This system implements a complete RAG pipeline that:
