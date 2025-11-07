@@ -381,21 +381,27 @@ npm install
 ```
 
 4. **Environment Configuration**
-Create `.env` file:
+Create `.env` file (⚠️ **NEVER commit this file to git**):
 ```env
-MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/
+# MongoDB Atlas Connection String
+# Get this from MongoDB Atlas → Connect → Connect your application
+MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-name>.<region>.mongodb.net/?retryWrites=true&w=majority
 MONGODB_DATABASE_NAME=rag_database
 MONGODB_COLLECTION_NAME=documents
 MONGODB_VECTOR_INDEX_NAME=vector_index
 
+# LLM API Configuration
 LLM_API_URL=https://your-llama-api.com/v1/completions
 LLM_API_KEY=your-api-key
 LLM_MODEL=llama3.2:latest
 
+# Embedding Configuration
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
 ```
+
+**⚠️ Security Note:** Replace `<username>`, `<password>`, and `<cluster-name>` with your actual MongoDB Atlas credentials. Never commit the `.env` file to version control.
 
 5. **Create MongoDB Vector Search Index**
 - Go to MongoDB Atlas → Search → Create Index
@@ -450,11 +456,18 @@ Access the application at `http://localhost:5173`
 
 ## 🔒 Security Considerations
 
-- Environment variables for sensitive data
+- **Environment variables** for sensitive data (`.env` file is gitignored)
+- **Never commit** `.env` file or any files containing credentials
 - File type validation
 - Size limits (10MB max)
-- No API keys in codebase
+- No API keys or connection strings in codebase
 - Local embedding generation (privacy-preserving)
+
+**⚠️ If you've accidentally committed credentials:**
+1. Rotate/change your MongoDB Atlas password immediately
+2. Revoke the old database user in MongoDB Atlas
+3. Check security logs for unauthorized access
+4. Remove credentials from git history (use `git filter-branch` or BFG Repo-Cleaner)
 
 ## 🛠️ Tech Stack
 
