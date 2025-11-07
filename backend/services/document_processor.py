@@ -47,8 +47,23 @@ class DocumentProcessor:
         try:
             text = self._extract_text(file_path, file_extension)
             
+            # Validate that text was extracted
+            if not text or not text.strip():
+                raise ValueError(
+                    f"Failed to extract text from {filename}. "
+                    "The file may be empty, corrupted, or contain only images/scanned content. "
+                    "For scanned PDFs, please use OCR to extract text first."
+                )
+            
             # Chunk the text with line numbers
             chunks_data = chunk_text_with_line_numbers(text)
+            
+            # Validate that chunks were created
+            if not chunks_data:
+                raise ValueError(
+                    f"Failed to create chunks from {filename}. "
+                    "The extracted text may be too short or invalid."
+                )
             
             # Create document metadata
             file_size = os.path.getsize(file_path)
@@ -107,11 +122,28 @@ class DocumentProcessor:
     
     def _extract_from_pdf(self, file_path: str) -> str:
         """Extract text from PDF file."""
-        reader = PdfReader(file_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n"
-        return text
+        try:
+            reader = PdfReader(file_path)
+            if len(reader.pages) == 0:
+                raise ValueError("PDF file has no pages")
+            
+            text = ""
+            for page_num, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if page_text:
+                    text += page_text + "\n"
+            
+            # If no text was extracted, provide helpful error message
+            if not text.strip():
+                raise ValueError(
+                    "No text could be extracted from this PDF. "
+                    "This may be a scanned/image-based PDF. "
+                    "Please use OCR software to extract text first, or upload a text-based PDF."
+                )
+            
+            return text
+        except Exception as e:
+            raise ValueError(f"Error extracting text from PDF: {str(e)}")
     
     def _extract_from_docx(self, file_path: str) -> str:
         """Extract text from DOCX file."""

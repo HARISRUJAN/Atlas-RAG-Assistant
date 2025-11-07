@@ -56,6 +56,13 @@ def upload_file():
             'stored_chunks': stored_count
         }), 200
         
+    except ValueError as e:
+        # Validation errors - provide clear message to user
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
+        # Log the full error for debugging
+        import traceback
+        print(f"Error processing file: {str(e)}")
+        print(traceback.format_exc())
         return jsonify({'error': f'Error processing file: {str(e)}'}), 500
 
