@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+@theme {
+  /* New MongoDB Color Palette */
+  --color-bg-primary: #F5F6F7;
+  --color-text-dark: #001E2B;
+  --color-accent-green: #3FA037;
+  --color-border-muted: #D5D7DA;
+  --color-text-muted: #5F6C72;
+  
+  /* Keep existing MongoDB colors for compatibility */
+  --color-mongodb-green: #3FA037;
+  --color-mongodb-darkGreen: #00684A;
+  --color-mongodb-darkGray: #001E2B;
+  --color-mongodb-mediumGray: #21313C;
+  --color-mongodb-lightGray: #3D4F58;
+  --color-mongodb-slate: #5C6C75;
+  --color-mongodb-lightSlate: #89979B;
+  --color-mongodb-offWhite: #F9FBFA;
+}
+
+/* MongoDB Design System Styles */
+@layer base {
+  body {
+    background-color: var(--color-bg-primary);
+    color: var(--color-text-dark);
+    font-family: 'Lato', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+}
+
+@layer components {
+  /* Card styles */
+  .card {
+    background-color: white;
+    border-radius: 0.5rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1);
+    padding: 1.5rem;
+    border: 1px solid var(--color-border-muted);
+  }
+  
+  .card-hover {
+    transition: all 0.2s;
+  }
+  
+  .card-hover:hover {
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    transform: scale(1.02);
+  }
+  
+  /* Button styles */
+  .btn-primary {
+    background-color: var(--color-accent-green);
+    color: white;
+    padding: 0.625rem 1.5rem;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: background-color 0.2s;
+  }
+  
+  .btn-primary:hover {
+    background-color: #35902d;
+  }
+  
+  .btn-primary:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--color-accent-green), 0 0 0 4px rgba(63, 160, 55, 0.3);
+  }
+  
+  .btn-secondary {
+    background-color: var(--color-text-muted);
+    color: white;
+    padding: 0.625rem 1.5rem;
+    border-radius: 0.375rem;
+    font-weight: 500;
+    transition: background-color 0.2s;
+  }
+  
+  .btn-secondary:hover {
+    opacity: 0.9;
+  }
+  
+  /* Input styles */
+  .input {
+    width: 100%;
+    padding: 0.625rem 1rem;
+    border: 1px solid var(--color-border-muted);
+    border-radius: 0.375rem;
+    transition: all 0.2s;
+  }
+  
+  .input:focus {
+    outline: none;
+    border-color: var(--color-accent-green);
+    box-shadow: 0 0 0 2px rgba(63, 160, 55, 0.2);
+  }
+  
+  /* Source reference card */
+  .source-card {
+    background-color: white;
+    border-left: 4px solid var(--color-accent-green);
+    padding: 1rem;
+    border-radius: 0 0.375rem 0.375rem 0;
+    margin-bottom: 0.75rem;
+    border: 1px solid var(--color-border-muted);
+    border-left: 4px solid var(--color-accent-green);
+  }
+}
+
+/* Loading spinner */
+.spinner {
+  border: 3px solid rgba(63, 160, 55, 0.1);
+  border-radius: 50%;
+  border-top-color: #3FA037;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s ease-in-out infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Smooth transitions */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
