@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react';
 import FileUpload from './components/FileUpload';
 import QueryInput from './components/QueryInput';
 import ResponseDisplay from './components/ResponseDisplay';
+import CollectionSelector from './components/CollectionSelector';
 import { apiService } from './api';
 import type { QueryResponse, UploadResponse, HealthStatus, UploadedFile } from './types';
 
@@ -14,11 +15,23 @@ function App() {
   const [isQueryLoading, setIsQueryLoading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
+  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
 
   useEffect(() => {
     // Check health on mount
     checkHealth();
   }, []);
+
+  useEffect(() => {
+    // Fetch suggested questions when collection changes
+    if (selectedCollection) {
+      fetchSuggestedQuestions(selectedCollection);
+    } else {
+      setSuggestedQuestions([]);
+    }
+  }, [selectedCollection]);
 
   const checkHealth = async () => {
     try {
@@ -51,10 +64,31 @@ function App() {
     );
   };
 
+  const fetchSuggestedQuestions = async (collectionName: string) => {
+    setIsLoadingQuestions(true);
+    try {
+      const questions = await apiService.getSuggestedQuestions(collectionName);
+      setSuggestedQuestions(questions);
+    } catch (error: any) {
+      console.error('Error fetching suggested questions:', error);
+      // Set empty array on error, so no questions are shown
+      setSuggestedQuestions([]);
+    } finally {
+      setIsLoadingQuestions(false);
+    }
+  };
+
+  const handleCollectionChange = (collectionName: string | null) => {
+    setSelectedCollection(collectionName);
+    // Clear previous response when collection changes
+    setResponse(null);
+  };
+
   const handleQuery = async (query: string) => {
     setIsQueryLoading(true);
     try {
-      const queryResponse = await apiService.query(query);
+      // selectedCollection is now in format "database.collection" or just "collection"
+      const queryResponse = await apiService.query(query, 5, selectedCollection || undefined);
       setResponse(queryResponse);
     } catch (error: any) {
       console.error('Query failed:', error);
@@ -106,31 +140,71 @@ function App() {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Left Column: Upload and Query */}
-          <div className="space-y-6">
+      {/* Main Content - 3 Column Layout */}
+      <main className="flex h-[calc(100vh-80px)] overflow-hidden">
+        {/* Left Column: Collections Sidebar */}
+        <div className="w-64 flex-shrink-0 border-r" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
+          <CollectionSelector
+            selectedCollection={selectedCollection}
+            onCollectionChange={handleCollectionChange}
+          />
+        </div>
+
+        {/* Center Column: Chat Interface */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          <div className="flex-1 overflow-y-auto p-6">
+            <ResponseDisplay response={response} isLoading={isQueryLoading} />
+          </div>
+          <div className="border-t p-6" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
+            <QueryInput 
+              onSubmit={handleQuery} 
+              isLoading={isQueryLoading}
+              suggestedQuestions={suggestedQuestions}
+            />
+          </div>
+        </div>
+
+        {/* Right Column: Upload & Match Panel */}
+        <div className="w-80 flex-shrink-0 border-l overflow-y-auto" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
+          <div className="p-6 space-y-6">
             <FileUpload 
               onUploadSuccess={handleUploadSuccess}
               uploadedFiles={uploadedFiles}
               onFileSelectionToggle={handleFileSelectionToggle}
             />
             
-            <QueryInput onSubmit={handleQuery} isLoading={isQueryLoading} />
+            {/* Source References Section */}
+            {response && response.sources && response.sources.length > 0 && (
+              <div className="card">
+                <h3 className="text-lg font-semibold text-mongodb-darkGray mb-4">
+                  Source Matches ({response.sources.length})
+                </h3>
+                <div className="space-y-3 max-h-96 overflow-y-auto">
+                  {response.sources.map((source, index) => (
+                    <div key={index} className="p-3 border rounded" style={{ borderColor: 'var(--color-border-muted)' }}>
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-sm font-medium" style={{ color: 'var(--color-text-dark)' }}>
+                          #{index + 1} {source.file_name}
+                        </span>
+                        <span className="text-xs px-2 py-1 rounded" style={{ 
+                          backgroundColor: 'var(--color-accent-green)', 
+                          color: 'white'
+                        }}>
+                          {Math.round(source.relevance_score * 100)}%
+                        </span>
+                      </div>
+                      <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        Lines {source.line_start}-{source.line_end}
+                      </p>
+                      <p className="text-xs mt-2 line-clamp-3" style={{ color: 'var(--color-text-muted)' }}>
+                        {source.content}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
-
-          {/* Right Column: Response */}
-          <div>
-            <ResponseDisplay response={response} isLoading={isQueryLoading} />
-          </div>
-        </div>
-
-        {/* Footer Info */}
-        <div className="mt-12 text-center">
-          <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-            Powered by MongoDB Atlas Vector Search, LangChain, and Llama 3.2
-          </p>
         </div>
       </main>
     </div>

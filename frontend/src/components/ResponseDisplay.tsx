@@ -13,10 +13,12 @@ interface ResponseDisplayProps {
 const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }) => {
   if (isLoading) {
     return (
-      <div className="card">
-        <div className="flex flex-col items-center py-8">
-          <div className="spinner mb-4"></div>
-          <p className="text-mongodb-slate">Searching and generating answer...</p>
+      <div className="flex justify-start">
+        <div className="max-w-3xl bg-white border rounded-lg p-4 shadow-sm" style={{ borderColor: 'var(--color-border-muted)' }}>
+          <div className="flex items-center space-x-2">
+            <div className="spinner" style={{ width: '20px', height: '20px' }}></div>
+            <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>Searching and generating answer...</p>
+          </div>
         </div>
       </div>
     );
@@ -56,12 +58,12 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
   const bestMatch = topSource;
 
   return (
-    <div className="space-y-6">
-      {/* Answer Section */}
-      <div className="card">
-        <h3 className="text-lg font-semibold text-mongodb-darkGray mb-3 flex items-center">
+    <div className="space-y-4">
+      {!response && !isLoading && (
+        <div className="flex flex-col items-center justify-center h-full min-h-[400px]">
           <svg
-            className="h-5 w-5 mr-2 text-mongodb-green"
+            className="mx-auto h-16 w-16 mb-4"
+            style={{ color: 'var(--color-text-muted)' }}
             fill="none"
             viewBox="0 0 24 24"
             stroke="currentColor"
@@ -70,58 +72,72 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
               strokeLinecap="round"
               strokeLinejoin="round"
               strokeWidth={2}
-              d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"
             />
           </svg>
-          Answer
-        </h3>
-        
-        {/* Best Match - Simple and Clean */}
-        {bestMatch && (
-          <div className="mb-4 pb-3 border-b" style={{ borderColor: 'var(--color-border-muted)' }}>
-            <div className="flex items-center mb-2">
-              <span className="text-xs font-medium" style={{ color: 'var(--color-accent-green)' }}>
-                Best Match
-              </span>
-              <span className="text-xs ml-2" style={{ color: 'var(--color-text-muted)' }}>
-                • {bestMatch.file_name} (Lines {bestMatch.line_start}-{bestMatch.line_end})
-              </span>
-            </div>
-          </div>
-        )}
-        
-        <div className="prose max-w-none">
-          <p className="text-mongodb-mediumGray leading-relaxed whitespace-pre-wrap">
-            {response.answer}
+          <p className="text-lg" style={{ color: 'var(--color-text-muted)' }}>
+            Ask a question to get started
           </p>
         </div>
-      </div>
+      )}
 
-      {/* Sources Section - Top Source Only */}
-      {topSource && (
-        <div className="card">
-          <h3 className="text-lg font-semibold text-mongodb-darkGray mb-4 flex items-center">
-            <svg
-              className="h-5 w-5 mr-2 text-mongodb-green"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"
-              />
-            </svg>
-            Source
-          </h3>
-          <div>
-            <SourceReference 
-              source={topSource} 
-              index={0}
-              isTopMatch={true}
-            />
+      {response && (
+        <div className="space-y-4">
+          {/* User Query */}
+          <div className="flex justify-end">
+            <div className="max-w-3xl bg-gray-100 rounded-lg p-4" style={{ backgroundColor: '#f3f4f6' }}>
+              <p className="text-sm font-medium mb-1" style={{ color: 'var(--color-text-dark)' }}>
+                You asked:
+              </p>
+              <p className="text-sm" style={{ color: 'var(--color-text-dark)' }}>
+                {response.query}
+              </p>
+            </div>
+          </div>
+
+          {/* AI Response */}
+          <div className="flex justify-start">
+            <div className="max-w-3xl bg-white border rounded-lg p-4 shadow-sm" style={{ borderColor: 'var(--color-border-muted)' }}>
+              <div className="flex items-center mb-2">
+                <svg
+                  className="h-5 w-5 mr-2"
+                  style={{ color: 'var(--color-accent-green)' }}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span className="text-sm font-medium" style={{ color: 'var(--color-text-dark)' }}>
+                  Answer
+                </span>
+                {bestMatch && (
+                  <span className="text-xs ml-2 px-2 py-1 rounded" style={{ 
+                    backgroundColor: 'var(--color-accent-green)', 
+                    color: 'white'
+                  }}>
+                    {bestMatch.file_name}
+                  </span>
+                )}
+              </div>
+              
+              <div className="prose max-w-none">
+                <p className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: 'var(--color-text-dark)' }}>
+                  {response.answer}
+                </p>
+              </div>
+
+              {bestMatch && (
+                <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: 'var(--color-border-muted)', color: 'var(--color-text-muted)' }}>
+                  Source: {bestMatch.file_name} (Lines {bestMatch.line_start}-{bestMatch.line_end})
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

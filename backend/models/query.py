@@ -31,13 +31,15 @@ class QueryRequest:
     
     query: str
     top_k: int = 5
+    collection_name: str = None
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'QueryRequest':
         """Create from dictionary."""
         return cls(
             query=data.get('query', ''),
-            top_k=data.get('top_k', 5)
+            top_k=data.get('top_k', 5),
+            collection_name=data.get('collection_name')
         )
 
 

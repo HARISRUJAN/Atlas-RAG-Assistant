@@ -41,3 +41,16 @@ export interface UploadedFile {
   upload_date: string;
 }
 
+export interface Collection {
+  name: string;
+}
+
+export interface Database {
+  name: string;
+  collections: string[];
+}
+
+export interface DatabasesResponse {
+  databases: Database[];
+}
+

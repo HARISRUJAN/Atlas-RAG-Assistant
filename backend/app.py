@@ -4,7 +4,7 @@ from flask import Flask
 from flask_cors import CORS
 
 from backend.config import Config
-from backend.routes import upload_bp, query_bp, health_bp
+from backend.routes import upload_bp, query_bp, health_bp, collections_bp
 
 
 def create_app():
@@ -32,6 +32,7 @@ def create_app():
     app.register_blueprint(upload_bp, url_prefix='/api')
     app.register_blueprint(query_bp, url_prefix='/api')
     app.register_blueprint(health_bp, url_prefix='/api')
+    app.register_blueprint(collections_bp, url_prefix='/api')
     
     # Root endpoint
     @app.route('/')
@@ -42,7 +43,9 @@ def create_app():
             'endpoints': {
                 'upload': '/api/upload',
                 'query': '/api/query',
-                'health': '/api/health'
+                'health': '/api/health',
+                'collections': '/api/collections',
+                'collection_questions': '/api/collections/<name>/questions'
             }
         }
     

@@ -10,12 +10,70 @@ from backend.models.document import DocumentChunk
 class VectorStoreService:
     """Service for MongoDB Vector Store operations."""
     
-    def __init__(self):
-        """Initialize vector store service."""
-        self.client = MongoClient(Config.MONGODB_URI)
-        self.db = self.client[Config.MONGODB_DATABASE_NAME]
-        self.collection = self.db[Config.MONGODB_COLLECTION_NAME]
-        self.index_name = Config.MONGODB_VECTOR_INDEX_NAME
+    def __init__(self, collection_name: str = None, database_name: str = None, index_name: str = None):
+        """
+        Initialize vector store service.
+        
+        Args:
+            collection_name: Optional collection name. Can be "collection" or "database.collection" format.
+                            Defaults to Config.MONGODB_COLLECTION_NAME
+            database_name: Optional database name. If collection_name contains ".", this is ignored.
+                          Defaults to Config.MONGODB_DATABASE_NAME
+            index_name: Optional index name. Defaults to Config.MONGODB_VECTOR_INDEX_NAME
+        """
+        # Parse database and collection from collection_name if it contains "."
+        if collection_name and '.' in collection_name:
+            db_name, coll_name = collection_name.split('.', 1)
+            database_name = db_name
+            collection_name = coll_name
+        
+        # Configure MongoDB client with SSL/TLS support for Atlas
+        # For mongodb+srv:// connections, TLS is automatically enabled
+        connection_params = {
+            'serverSelectionTimeoutMS': 30000,
+            'connectTimeoutMS': 30000,
+            'socketTimeoutMS': 30000,
+        }
+        
+        # Check if connection string uses mongodb+srv://
+        if Config.MONGODB_URI and Config.MONGODB_URI.startswith('mongodb+srv://'):
+            # For mongodb+srv://, TLS is automatic, but we can add retryWrites if not present
+            if 'retryWrites' not in Config.MONGODB_URI:
+                separator = '&' if '?' in Config.MONGODB_URI else '?'
+                uri_with_params = f"{Config.MONGODB_URI}{separator}retryWrites=true&w=majority"
+            else:
+                uri_with_params = Config.MONGODB_URI
+        else:
+            # For standard mongodb:// connections, explicitly enable TLS
+            connection_params['tls'] = True
+            connection_params['tlsAllowInvalidCertificates'] = False
+            uri_with_params = Config.MONGODB_URI
+        
+        # Try to create client - if SSL fails, provide helpful error
+        try:
+            self.client = MongoClient(uri_with_params, **connection_params)
+            # Test connection immediately
+            self.client.admin.command('ping')
+        except Exception as e:
+            error_msg = str(e)
+            if 'SSL' in error_msg or 'TLS' in error_msg or 'handshake' in error_msg:
+                print("\n" + "="*70)
+                print("SSL/TLS CONNECTION ERROR DETECTED")
+                print("="*70)
+                print("\nYour connection string should be in this format:")
+                print("mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority")
+                print("\nCommon fixes:")
+                print("1. Ensure you're using 'mongodb+srv://' (not 'mongodb://')")
+                print("2. Check MongoDB Atlas → Network Access → Add your IP address")
+                print("3. Verify username/password are correct and URL-encoded")
+                print("4. Try: pip install --upgrade pymongo")
+                print("="*70 + "\n")
+            raise
+        db_name = database_name or Config.MONGODB_DATABASE_NAME
+        self.db = self.client[db_name]
+        collection = collection_name or Config.MONGODB_COLLECTION_NAME
+        self.collection = self.db[collection]
+        self.index_name = index_name or Config.MONGODB_VECTOR_INDEX_NAME
     
     def test_connection(self) -> bool:
         """Test MongoDB connection."""

@@ -11,10 +11,23 @@ from backend.services.vector_store import VectorStoreService
 class RAGService:
     """Service for Retrieval-Augmented Generation."""
     
-    def __init__(self):
-        """Initialize RAG service."""
+    def __init__(self, collection_name: str = None, database_name: str = None, index_name: str = None):
+        """
+        Initialize RAG service.
+        
+        Args:
+            collection_name: Optional collection name. Can be "collection" or "database.collection" format.
+                            Defaults to Config.MONGODB_COLLECTION_NAME
+            database_name: Optional database name. If collection_name contains ".", this is ignored.
+                          Defaults to Config.MONGODB_DATABASE_NAME
+            index_name: Optional index name. Defaults to Config.MONGODB_VECTOR_INDEX_NAME
+        """
         self.embedding_service = EmbeddingService()
-        self.vector_store = VectorStoreService()
+        self.vector_store = VectorStoreService(
+            collection_name=collection_name, 
+            database_name=database_name,
+            index_name=index_name
+        )
         self.llm_api_url = Config.LLM_API_URL
         self.llm_api_key = Config.LLM_API_KEY
         self.llm_model = Config.LLM_MODEL

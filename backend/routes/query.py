@@ -27,7 +27,8 @@ def query_documents():
         query_request = QueryRequest.from_dict(data)
         
         # Process query through RAG pipeline
-        rag_service = RAGService()
+        # Pass collection_name to RAGService if provided
+        rag_service = RAGService(collection_name=query_request.collection_name)
         response = rag_service.query(query_request)
         
         return jsonify(response.to_dict()), 200

@@ -82,14 +82,14 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, uploadedFiles,
   };
 
   return (
-    <div className="card">
-      <h2 className="text-2xl font-semibold text-mongodb-darkGray mb-4">
+    <div>
+      <h2 className="text-lg font-semibold text-mongodb-darkGray mb-4">
         Upload Documents
       </h2>
       
       <div
         className={`
-          border-2 border-dashed rounded-lg p-8 text-center cursor-pointer
+          border-2 border-dashed rounded-lg p-4 text-center cursor-pointer
           transition-all duration-200
           ${isDragging 
             ? 'border-mongodb-green bg-green-50' 
@@ -157,50 +157,62 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, uploadedFiles,
 
       {/* Uploaded Files List with Selection */}
       {uploadedFiles.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-lg font-semibold text-mongodb-darkGray mb-3">
-            Uploaded Documents ({uploadedFiles.length})
-          </h3>
-          <div className="space-y-2">
+        <div className="mt-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-mongodb-darkGray">
+              Files ({uploadedFiles.length})
+            </h3>
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              {uploadedFiles.filter(f => f.selectedForIndex).length} selected
+            </span>
+          </div>
+          <div className="space-y-2 max-h-64 overflow-y-auto">
             {uploadedFiles.map((file) => (
               <div 
                 key={file.document_id}
-                className="flex items-center p-3 bg-white border rounded-lg hover:shadow-md transition-shadow"
-                style={{ borderColor: 'var(--color-border-muted)' }}
+                className={`p-3 bg-white border rounded-lg hover:shadow-sm transition-all ${
+                  file.selectedForIndex ? 'border-2' : ''
+                }`}
+                style={{ 
+                  borderColor: file.selectedForIndex 
+                    ? 'var(--color-accent-green)' 
+                    : 'var(--color-border-muted)',
+                  backgroundColor: file.selectedForIndex ? '#f0fdf4' : 'white'
+                }}
               >
-                <input
-                  type="checkbox"
-                  checked={file.selectedForIndex}
-                  onChange={() => onFileSelectionToggle(file.document_id)}
-                  className="h-5 w-5 rounded cursor-pointer"
-                  style={{ 
-                    accentColor: 'var(--color-accent-green)',
-                    borderColor: 'var(--color-border-muted)'
-                  }}
-                />
-                <div className="ml-3 flex-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium" style={{ color: 'var(--color-text-dark)' }}>
-                      {file.file_name}
-                    </span>
-                    <span className="text-xs px-2 py-1 rounded" style={{ 
-                      backgroundColor: 'var(--color-accent-green)', 
-                      color: 'white'
-                    }}>
-                      {file.total_chunks} chunks
-                    </span>
-                  </div>
-                  <div className="text-sm mt-1" style={{ color: 'var(--color-text-muted)' }}>
-                    {file.selectedForIndex ? (
-                      <span className="flex items-center">
-                        <svg className="h-4 w-4 mr-1" fill="currentColor" viewBox="0 0 20 20" style={{ color: 'var(--color-accent-green)' }}>
-                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                        </svg>
-                        Included in search
+                <div className="flex items-start space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={file.selectedForIndex}
+                    onChange={() => onFileSelectionToggle(file.document_id)}
+                    className="h-4 w-4 rounded cursor-pointer mt-1"
+                    style={{ 
+                      accentColor: 'var(--color-accent-green)',
+                      borderColor: 'var(--color-border-muted)'
+                    }}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center space-x-1 mb-1">
+                      <svg className="h-4 w-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: 'var(--color-text-muted)' }}>
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      </svg>
+                      <span className="font-medium text-sm truncate" style={{ color: 'var(--color-text-dark)' }}>
+                        {file.file_name}
                       </span>
-                    ) : (
-                      <span>Not included in search</span>
-                    )}
+                    </div>
+                    <div className="text-xs mt-1" style={{ color: 'var(--color-text-muted)' }}>
+                      <div className="flex items-center space-x-3">
+                        <span>{file.total_chunks} chunks</span>
+                        {file.selectedForIndex && (
+                          <span className="text-xs px-1.5 py-0.5 rounded" style={{ 
+                            backgroundColor: 'var(--color-accent-green)', 
+                            color: 'white'
+                          }}>
+                            Active
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
