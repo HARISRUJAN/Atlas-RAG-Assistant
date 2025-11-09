@@ -12,6 +12,10 @@ This system implements a complete RAG pipeline that:
 - Stores vectors in MongoDB Atlas with semantic search capabilities
 - Retrieves contextually relevant chunks using vector similarity
 - Generates accurate, source-cited answers using Llama 3.2
+- **NEW**: Supports multiple MongoDB databases and collections
+- **NEW**: Dynamic question generation based on collection content
+- **NEW**: Hierarchical collection browser with tree view
+- **NEW**: Three-column UI layout for improved user experience
 
 ## 🏗️ System Architecture
 
@@ -19,9 +23,14 @@ This system implements a complete RAG pipeline that:
 ┌─────────────────────────────────────────────────────────────┐
 │                        Frontend Layer                        │
 │  React + TypeScript + Tailwind CSS                          │
-│  • File Upload Component                                    │
-│  • Query Interface                                          │
-│  • Response Display with Source Citations                   │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │ Collections  │  │ Chat         │  │ Upload/      │      │
+│  │ Sidebar      │  │ Interface    │  │ Match Panel  │      │
+│  │ • Database   │  │ • Query      │  │ • File       │      │
+│  │   Tree View  │  │   Input      │  │   Upload     │      │
+│  │ • Collection │  │ • Dynamic    │  │ • Source     │      │
+│  │   Selection  │  │   Questions  │  │   Matches    │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
 └──────────────────────┬──────────────────────────────────────┘
                         │ HTTP/REST API
 ┌───────────────────────▼──────────────────────────────────────┐
@@ -33,13 +42,15 @@ This system implements a complete RAG pipeline that:
 │  │  Processor   │──│   Service   │──│    Store     │       │
 │  └──────────────┘  └──────────────┘  └──────┬───────┘       │
 │                                              │                │
-│  ┌──────────────────────────────────────────▼───────┐       │
-│  │           RAG Service (LangChain)                 │       │
-│  │  • Vector Retriever                                │       │
-│  │  • Context Assembly                                │       │
-│  │  • LLM Chain (Llama 3.2)                          │       │
-│  │  • Response Formatting                             │       │
-│  └────────────────────────────────────────────────────┘       │
+│  ┌──────────────┐  ┌──────────────────────────────────────┐ │
+│  │ Collections  │  │           RAG Service (LangChain)     │ │
+│  │  Service     │  │  • Vector Retriever                  │ │
+│  │  • List DBs  │  │  • Context Assembly                  │ │
+│  │  • List      │  │  • LLM Chain (Llama 3.2)            │ │
+│  │    Collections│  │  • Response Formatting              │ │
+│  │  • Generate  │  │  • Multi-Collection Support          │ │
+│  │    Questions │  └──────────────────────────────────────┘ │
+│  └──────────────┘                                            │
 └───────────────────────┬──────────────────────────────────────┘
                         │
 ┌───────────────────────▼──────────────────────────────────────┐
@@ -322,26 +333,30 @@ mongo_rag/
 │   ├── services/                   # Core business logic
 │   │   ├── document_processor.py  # Document loading & extraction
 │   │   ├── embedding_service.py   # Embedding generation (sentence-transformers)
-│   │   ├── vector_store.py        # MongoDB vector operations
+│   │   ├── vector_store.py        # MongoDB vector operations (multi-collection support)
 │   │   └── rag_service.py         # RAG pipeline orchestration (LangChain)
 │   ├── routes/                     # API endpoints
 │   │   ├── upload.py               # File upload handler
 │   │   ├── query.py               # Query processing endpoint
+│   │   ├── collections.py         # Collections & questions endpoints (NEW)
 │   │   └── health.py               # Health check endpoint
 │   └── utils/                      # Utility functions
 │       ├── file_validator.py       # File validation
-│       └── chunking.py             # Text chunking with line tracking
+│       ├── chunking.py             # Text chunking with line tracking
+│       └── mongodb_client.py      # MongoDB connection utilities (NEW)
 ├── frontend/
 │   ├── src/
 │   │   ├── components/             # React components
 │   │   │   ├── FileUpload.tsx     # Document upload UI
-│   │   │   ├── QueryInput.tsx      # Query input with suggestions
+│   │   │   ├── QueryInput.tsx      # Query input with dynamic suggestions
 │   │   │   ├── ResponseDisplay.tsx # Answer display
+│   │   │   ├── CollectionSelector.tsx # Database/collection tree view (NEW)
 │   │   │   └── SourceReference.tsx # Source citation component
-│   │   ├── api.ts                  # API client
-│   │   ├── types.ts                # TypeScript definitions
-│   │   └── App.tsx                 # Main application component
+│   │   ├── api.ts                  # API client (enhanced with collections API)
+│   │   ├── types.ts                # TypeScript definitions (extended)
+│   │   └── App.tsx                 # Main application component (3-column layout)
 │   └── package.json               # Frontend dependencies
+├── start_project.py                # Project startup script (NEW)
 ├── requirements.txt                # Python dependencies
 └── README.md                       # This file
 ```
@@ -409,15 +424,111 @@ CHUNK_OVERLAP=200
 - Use the JSON configuration shown in "Vector Search Configuration" above
 
 6. **Run the Application**
+
+**Option 1: Using the startup script (Recommended)**
+```bash
+# From project root
+python start_project.py
+```
+This script will:
+- Activate the virtual environment
+- Start the Flask backend server
+- Start the frontend development server
+- Display connection information
+
+**Option 2: Manual startup**
 ```bash
 # Backend (from project root)
 python -m backend.app
 
-# Frontend (from frontend directory)
+# Frontend (from frontend directory, in a new terminal)
+cd frontend
 npm run dev
 ```
 
 Access the application at `http://localhost:5173`
+
+## 🆕 New Features
+
+### 1. Multi-Database & Collection Support
+
+The system now supports querying across multiple MongoDB databases and collections:
+
+- **Hierarchical View**: Browse all databases and their collections in a tree structure
+- **Dynamic Selection**: Select any collection from your MongoDB Atlas instance
+- **Flexible Querying**: Query specific collections without changing configuration
+- **Collection Browser**: Left sidebar displays all available databases and collections
+
+### 2. Dynamic Question Generation
+
+Instead of hardcoded suggested questions, the system now generates context-aware questions:
+
+- **Content-Based**: Questions are generated by analyzing actual documents in the selected collection
+- **LLM-Powered**: Uses the same LLM to create relevant questions based on collection content
+- **Automatic Updates**: Questions refresh when you select a different collection
+- **Smart Sampling**: Analyzes sample documents to understand collection content
+
+**API Endpoint**: `GET /api/collections/<database>/<collection>/questions`
+
+### 3. Enhanced UI Layout
+
+The interface has been redesigned with a three-column layout:
+
+```
+┌──────────────┬──────────────────────┬──────────────┐
+│              │                      │              │
+│ Collections  │    Chat Interface   │  Upload/     │
+│ Sidebar      │                      │  Match       │
+│              │  • Query Input       │  Panel       │
+│ • Database   │  • Dynamic Questions │              │
+│   Tree       │  • Response Display │  • File      │
+│ • Collection │  • Source Citations │    Upload    │
+│   Selection  │                      │  • Matched   │
+│              │                      │    Sources   │
+└──────────────┴──────────────────────┴──────────────┘
+```
+
+**Features:**
+- **Left Panel**: Scrollable collection browser with expandable database/collection tree
+- **Center Panel**: Full-height chat interface with query input and response display
+- **Right Panel**: File upload and source match display
+- **Responsive**: All panels are independently scrollable
+
+### 4. Collection Management API
+
+New backend endpoints for collection management:
+
+- `GET /api/collections` - List all databases with their collections
+- `GET /api/collections/<database>/<collection>/questions` - Generate dynamic questions for a collection
+
+**Response Format:**
+```json
+{
+  "databases": [
+    {
+      "name": "database_name",
+      "collections": ["collection1", "collection2"]
+    }
+  ]
+}
+```
+
+### 5. Enhanced Query API
+
+The query endpoint now supports collection-specific queries:
+
+**Request:**
+```json
+{
+  "query": "What are the key details?",
+  "collection_name": "database_name/collection_name"
+}
+```
+
+**Benefits:**
+- Query specific collections without reconfiguration
+- Support for multiple vector indexes
+- Isolated data queries per collection
 
 ## 🎓 Key LangChain Concepts Demonstrated
 
@@ -462,6 +573,11 @@ Access the application at `http://localhost:5173`
 - Size limits (10MB max)
 - No API keys or connection strings in codebase
 - Local embedding generation (privacy-preserving)
+- **MongoDB Connection Security**: 
+  - SSL/TLS encryption for all connections
+  - IP whitelisting support in MongoDB Atlas
+  - Connection string validation
+  - Automatic retry logic with proper error handling
 
 **⚠️ If you've accidentally committed credentials:**
 1. Rotate/change your MongoDB Atlas password immediately
@@ -481,6 +597,51 @@ Access the application at `http://localhost:5173`
 | **Frontend** | React + TypeScript + Vite |
 | **Styling** | Tailwind CSS |
 | **Document Processing** | PyPDF2, python-docx, markdown |
+
+## 🐛 Troubleshooting
+
+### MongoDB Connection Issues
+
+If you encounter SSL/TLS connection errors:
+
+1. **Check IP Whitelist**: 
+   - Go to MongoDB Atlas → Network Access
+   - Add your current IP address or `0.0.0.0/0` (for testing only)
+   - Wait 1-2 minutes for changes to propagate
+
+2. **Verify Connection String**:
+   - Ensure format: `mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&w=majority`
+   - Check username and password are correct
+   - Verify cluster name matches your Atlas cluster
+
+3. **Test Connection**:
+   ```bash
+   python test_mongodb_connection.py
+   ```
+   This diagnostic script will help identify connection issues.
+
+4. **Update Dependencies**:
+   ```bash
+   pip install --upgrade pymongo
+   ```
+
+### Blank Screen Issues
+
+If the frontend shows a blank screen:
+
+1. Check browser console (F12) for JavaScript errors
+2. Verify frontend dev server is running: `npm run dev`
+3. Check backend API is accessible: `http://localhost:5000/api/health`
+4. Hard refresh the page (Ctrl+Shift+R)
+
+### Collection Not Found
+
+If collections don't appear:
+
+1. Verify MongoDB connection is working
+2. Check that collections exist in your MongoDB Atlas instance
+3. Ensure the database user has read permissions
+4. Check browser console for API errors
 
 ## 📝 License
 
