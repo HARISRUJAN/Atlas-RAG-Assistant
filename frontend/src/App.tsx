@@ -7,6 +7,7 @@ import FileUpload from './components/FileUpload';
 import QueryInput from './components/QueryInput';
 import ResponseDisplay from './components/ResponseDisplay';
 import CollectionSelector from './components/CollectionSelector';
+import StatusProgressBar from './components/StatusProgressBar';
 import { apiService } from './api';
 import type { QueryResponse, UploadResponse, HealthStatus, UploadedFile } from './types';
 
@@ -15,9 +16,19 @@ function App() {
   const [isQueryLoading, setIsQueryLoading] = useState(false);
   const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
-  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [selectedCollections, setSelectedCollections] = useState<Set<string>>(new Set());
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
-  const [isLoadingQuestions, setIsLoadingQuestions] = useState(false);
+  const [mongodbUri, setMongodbUri] = useState<string>('');
+  const [connectionId, setConnectionId] = useState<string | null>(null);
+  const [queryStatus, setQueryStatus] = useState<'idle' | 'initializing' | 'mongodb-retriever' | 'generating-answer' | 'complete'>('idle');
+
+  useEffect(() => {
+    // Load MongoDB URI from localStorage on mount
+    const storedUri = localStorage.getItem('mongodb_uri');
+    if (storedUri) {
+      setMongodbUri(storedUri);
+    }
+  }, []);
 
   useEffect(() => {
     // Check health on mount
@@ -25,13 +36,14 @@ function App() {
   }, []);
 
   useEffect(() => {
-    // Fetch suggested questions when collection changes
-    if (selectedCollection) {
-      fetchSuggestedQuestions(selectedCollection);
+    // Fetch suggested questions when collections change (use first selected collection)
+    if (selectedCollections.size > 0) {
+      const firstCollection = Array.from(selectedCollections)[0];
+      fetchSuggestedQuestions(firstCollection);
     } else {
       setSuggestedQuestions([]);
     }
-  }, [selectedCollection]);
+  }, [selectedCollections]);
 
   const checkHealth = async () => {
     try {
@@ -65,31 +77,43 @@ function App() {
   };
 
   const fetchSuggestedQuestions = async (collectionName: string) => {
-    setIsLoadingQuestions(true);
     try {
-      const questions = await apiService.getSuggestedQuestions(collectionName);
+      const questions = await apiService.getSuggestedQuestions(collectionName, mongodbUri);
       setSuggestedQuestions(questions);
     } catch (error: any) {
       console.error('Error fetching suggested questions:', error);
       // Set empty array on error, so no questions are shown
       setSuggestedQuestions([]);
-    } finally {
-      setIsLoadingQuestions(false);
     }
   };
 
-  const handleCollectionChange = (collectionName: string | null) => {
-    setSelectedCollection(collectionName);
-    // Clear previous response when collection changes
+  const handleCollectionsChange = (collections: Set<string>) => {
+    setSelectedCollections(collections);
+    // Clear previous response when collections change
     setResponse(null);
   };
 
   const handleQuery = async (query: string) => {
     setIsQueryLoading(true);
+    setQueryStatus('initializing');
+    
     try {
-      // selectedCollection is now in format "database.collection" or just "collection"
-      const queryResponse = await apiService.query(query, 5, selectedCollection || undefined);
+      // Simulate status progression
+      setTimeout(() => setQueryStatus('mongodb-retriever'), 300);
+      setTimeout(() => setQueryStatus('generating-answer'), 800);
+      
+      // selectedCollections contains collection names in format "database.collection"
+      const collectionNames = selectedCollections.size > 0 
+        ? Array.from(selectedCollections) 
+        : undefined;
+      // Use connection_id if available, otherwise fall back to mongodbUri
+      const connectionIds = connectionId ? [connectionId] : undefined;
+      const queryResponse = await apiService.query(query, 5, collectionNames, connectionIds, mongodbUri);
       setResponse(queryResponse);
+      setQueryStatus('complete');
+      
+      // Reset status after a short delay
+      setTimeout(() => setQueryStatus('idle'), 2000);
     } catch (error: any) {
       console.error('Query failed:', error);
       setResponse({
@@ -97,9 +121,15 @@ function App() {
         sources: [],
         query: query
       });
+      setQueryStatus('idle');
     } finally {
       setIsQueryLoading(false);
     }
+  };
+
+  const handleMongodbUriChange = (uri: string) => {
+    setMongodbUri(uri);
+    localStorage.setItem('mongodb_uri', uri);
   };
 
   return (
@@ -140,13 +170,20 @@ function App() {
         </div>
       </header>
 
+      {/* Status Progress Bar */}
+      <StatusProgressBar status={queryStatus} />
+
       {/* Main Content - 3 Column Layout */}
       <main className="flex h-[calc(100vh-80px)] overflow-hidden">
         {/* Left Column: Collections Sidebar */}
         <div className="w-64 flex-shrink-0 border-r" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
           <CollectionSelector
-            selectedCollection={selectedCollection}
-            onCollectionChange={handleCollectionChange}
+            selectedCollections={selectedCollections}
+            onCollectionsChange={handleCollectionsChange}
+            mongodbUri={mongodbUri}
+            onMongodbUriChange={handleMongodbUriChange}
+            connectionId={connectionId}
+            onConnectionIdChange={setConnectionId}
           />
         </div>
 
@@ -171,6 +208,8 @@ function App() {
               onUploadSuccess={handleUploadSuccess}
               uploadedFiles={uploadedFiles}
               onFileSelectionToggle={handleFileSelectionToggle}
+              connectionId={connectionId}
+              mongodbUri={mongodbUri}
             />
             
             {/* Source References Section */}

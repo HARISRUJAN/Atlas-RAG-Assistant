@@ -54,3 +54,33 @@ export interface DatabasesResponse {
   databases: Database[];
 }
 
+// Connection types
+export type Provider = 'mongo' | 'redis' | 'qdrant' | 'pinecone';
+export type Scope = 'list.indexes' | 'read.metadata' | 'read.vectors' | 'write.vectors';
+
+export interface Connection {
+  connection_id: string;
+  provider: Provider;
+  display_name: string;
+  scopes: Scope[];
+  status: 'active' | 'inactive' | 'error';
+  created_at: string;
+}
+
+export interface ConnectionCreateRequest {
+  provider: Provider;
+  display_name?: string;
+  uri: string;
+  api_key?: string;
+}
+
+export interface ConnectionConsentRequest {
+  scopes: Scope[];
+}
+
+export interface ConnectionCollectionsResponse {
+  connection_id: string;
+  provider: Provider;
+  collections: string[];
+}
+

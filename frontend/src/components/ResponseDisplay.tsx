@@ -3,7 +3,6 @@
  */
 
 import type { QueryResponse } from '../types';
-import SourceReference from './SourceReference';
 
 interface ResponseDisplayProps {
   response: QueryResponse | null;
@@ -83,15 +82,30 @@ const ResponseDisplay: React.FC<ResponseDisplayProps> = ({ response, isLoading }
 
       {response && (
         <div className="space-y-4">
-          {/* User Query */}
+          {/* User Query - Chat Bubble */}
           <div className="flex justify-end">
-            <div className="max-w-3xl bg-gray-100 rounded-lg p-4" style={{ backgroundColor: '#f3f4f6' }}>
-              <p className="text-sm font-medium mb-1" style={{ color: 'var(--color-text-dark)' }}>
-                You asked:
-              </p>
-              <p className="text-sm" style={{ color: 'var(--color-text-dark)' }}>
-                {response.query}
-              </p>
+            <div className="max-w-3xl relative">
+              <div 
+                className="rounded-2xl px-4 py-3 shadow-sm"
+                style={{ 
+                  backgroundColor: 'var(--color-accent-green)',
+                  color: 'white'
+                }}
+              >
+                <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                  {response.query}
+                </p>
+              </div>
+              {/* Chat bubble tail pointing left */}
+              <div 
+                className="absolute right-0 top-3 w-0 h-0"
+                style={{
+                  borderRight: '8px solid var(--color-accent-green)',
+                  borderTop: '8px solid transparent',
+                  borderBottom: '8px solid transparent',
+                  transform: 'translateX(100%)'
+                }}
+              />
             </div>
           </div>
 

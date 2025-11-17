@@ -1,49 +1,100 @@
 """Collections route handler."""
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from pymongo import MongoClient
 from pymongo.errors import ConnectionFailure
 import requests
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from backend.config import Config
 
 collections_bp = Blueprint('collections', __name__)
 
 
+def get_mongodb_uri() -> str:
+    """
+    Get MongoDB URI from request headers or fallback to config.
+    
+    Returns:
+        MongoDB URI string
+    """
+    # Check for custom URI in headers
+    custom_uri = request.headers.get('X-MongoDB-URI')
+    if custom_uri:
+        return custom_uri
+    return Config.MONGODB_URI
+
+
+def create_mongodb_client_from_uri(uri: str) -> MongoClient:
+    """
+    Create MongoDB client from URI with proper SSL/TLS configuration.
+    
+    Args:
+        uri: MongoDB connection URI
+        
+    Returns:
+        MongoClient instance
+    """
+    connection_params = {
+        'serverSelectionTimeoutMS': 30000,
+        'connectTimeoutMS': 30000,
+        'socketTimeoutMS': 30000,
+    }
+    
+    # Handle connection string format
+    if uri and uri.startswith('mongodb+srv://'):
+        # For mongodb+srv://, TLS is automatic
+        if 'retryWrites' not in uri:
+            separator = '&' if '?' in uri else '?'
+            uri_with_params = f"{uri}{separator}retryWrites=true&w=majority"
+        else:
+            uri_with_params = uri
+    else:
+        # For standard mongodb:// connections
+        connection_params['tls'] = True
+        connection_params['tlsAllowInvalidCertificates'] = False
+        uri_with_params = uri
+    
+    client = MongoClient(uri_with_params, **connection_params)
+    # Test connection
+    client.admin.command('ping')
+    return client
+
+
 @collections_bp.route('/collections', methods=['GET'])
 def list_collections():
     """
     List all databases and their collections in MongoDB.
+    Supports both connection_id (via header) and MongoDB URI (for backward compatibility).
     
     Returns:
         JSON response with databases and their collections
     """
     try:
-        # Configure MongoDB client with SSL/TLS support for Atlas
-        connection_params = {
-            'serverSelectionTimeoutMS': 30000,
-            'connectTimeoutMS': 30000,
-            'socketTimeoutMS': 30000,
-        }
-        
-        # Handle connection string format
-        if Config.MONGODB_URI and Config.MONGODB_URI.startswith('mongodb+srv://'):
-            # For mongodb+srv://, TLS is automatic
-            if 'retryWrites' not in Config.MONGODB_URI:
-                separator = '&' if '?' in Config.MONGODB_URI else '?'
-                uri_with_params = f"{Config.MONGODB_URI}{separator}retryWrites=true&w=majority"
-            else:
-                uri_with_params = Config.MONGODB_URI
+        # Check for connection_id first (new multi-provider support)
+        connection_id = request.headers.get('X-Connection-ID')
+        if connection_id:
+            from backend.models.connection import ConnectionStorage
+            storage = ConnectionStorage()
+            connection = storage.get(connection_id)
+            storage.close()
+            
+            if not connection:
+                return jsonify({'error': 'Connection not found'}), 404
+            
+            if connection.provider != 'mongo':
+                return jsonify({'error': 'This endpoint only supports MongoDB connections'}), 400
+            
+            # Use connection's MongoDB URI
+            mongodb_uri = connection.uri
         else:
-            # For standard mongodb:// connections
-            connection_params['tls'] = True
-            connection_params['tlsAllowInvalidCertificates'] = False
-            uri_with_params = Config.MONGODB_URI
+            # Fall back to MongoDB URI header or config (backward compatibility)
+            mongodb_uri = get_mongodb_uri()
+            if not mongodb_uri:
+                return jsonify({'error': 'MongoDB URI not configured'}), 500
         
-        client = MongoClient(uri_with_params, **connection_params)
-        # Test connection
-        client.admin.command('ping')
+        # Create MongoDB client
+        client = create_mongodb_client_from_uri(mongodb_uri)
         
         # Get all database names
         database_names = client.list_database_names()
@@ -116,30 +167,13 @@ def generate_questions(collection_path: str):
             db_name = Config.MONGODB_DATABASE_NAME
             collection_name = collection_path
         
-        # Configure MongoDB client with SSL/TLS support for Atlas
-        connection_params = {
-            'serverSelectionTimeoutMS': 30000,
-            'connectTimeoutMS': 30000,
-            'socketTimeoutMS': 30000,
-        }
+        # Get MongoDB URI from headers or config
+        mongodb_uri = get_mongodb_uri()
+        if not mongodb_uri:
+            return jsonify({'error': 'MongoDB URI not configured'}), 500
         
-        # Handle connection string format
-        if Config.MONGODB_URI and Config.MONGODB_URI.startswith('mongodb+srv://'):
-            # For mongodb+srv://, TLS is automatic
-            if 'retryWrites' not in Config.MONGODB_URI:
-                separator = '&' if '?' in Config.MONGODB_URI else '?'
-                uri_with_params = f"{Config.MONGODB_URI}{separator}retryWrites=true&w=majority"
-            else:
-                uri_with_params = Config.MONGODB_URI
-        else:
-            # For standard mongodb:// connections
-            connection_params['tls'] = True
-            connection_params['tlsAllowInvalidCertificates'] = False
-            uri_with_params = Config.MONGODB_URI
-        
-        client = MongoClient(uri_with_params, **connection_params)
-        # Test connection
-        client.admin.command('ping')
+        # Create MongoDB client
+        client = create_mongodb_client_from_uri(mongodb_uri)
         db = client[db_name]
         
         # Check if collection exists

@@ -2,34 +2,229 @@
  * Collection selector component for choosing MongoDB collections
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { apiService } from '../api';
 import type { Database } from '../types';
+import ConnectionSelector from './ConnectionSelector';
+import ConnectionModal from './ConnectionModal';
+import ProviderBadge from './ProviderBadge';
+
+// Component for database checkbox with indeterminate state
+const DatabaseCheckbox: React.FC<{
+  dbName: string;
+  selectionState: 'all' | 'some' | 'none';
+  onToggle: (dbName: string, e?: React.MouseEvent | React.ChangeEvent) => void;
+}> = ({ dbName, selectionState, onToggle }) => {
+  const checkboxRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (checkboxRef.current) {
+      checkboxRef.current.indeterminate = selectionState === 'some';
+    }
+  }, [selectionState]);
+
+  return (
+    <input
+      ref={checkboxRef}
+      type="checkbox"
+      checked={selectionState === 'all'}
+      onChange={(e) => onToggle(dbName, e)}
+      onClick={(e) => e.stopPropagation()}
+      className="h-4 w-4 rounded cursor-pointer"
+      style={{ 
+        accentColor: 'var(--color-accent-green)',
+        borderColor: 'var(--color-border-muted)'
+      }}
+    />
+  );
+};
 
 interface CollectionSelectorProps {
-  selectedCollection: string | null;
-  onCollectionChange: (collectionName: string | null) => void;
+  selectedCollections: Set<string>;
+  onCollectionsChange: (collections: Set<string>) => void;
+  mongodbUri: string; // For backward compatibility
+  onMongodbUriChange: (uri: string) => void; // For backward compatibility
+  connectionId?: string | null; // New: connection ID
+  onConnectionIdChange?: (connectionId: string | null) => void; // New: connection ID change handler
 }
 
 const CollectionSelector: React.FC<CollectionSelectorProps> = ({ 
-  selectedCollection, 
-  onCollectionChange 
+  selectedCollections, 
+  onCollectionsChange,
+  mongodbUri,
+  onMongodbUriChange,
+  connectionId: propConnectionId,
+  onConnectionIdChange: propOnConnectionIdChange
 }) => {
   const [databases, setDatabases] = useState<Database[]>([]);
   const [expandedDatabases, setExpandedDatabases] = useState<Set<string>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
+  const [uriInput, setUriInput] = useState<string>('');
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'testing'>('disconnected');
+  const [connectionId, setConnectionId] = useState<string | null>(propConnectionId || null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [connectionProvider, setConnectionProvider] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchDatabases();
+    // Load default URI from backend on mount
+    loadDefaultUri();
   }, []);
 
-  const fetchDatabases = async () => {
+  useEffect(() => {
+    // Update URI input when prop changes
+    if (mongodbUri) {
+      setUriInput(mongodbUri);
+    }
+  }, [mongodbUri]);
+
+  useEffect(() => {
+    // Use connection_id if available, otherwise fall back to MongoDB URI
+    if (connectionId) {
+      fetchConnectionCollections();
+    } else if (mongodbUri && mongodbUri.trim()) {
+      fetchDatabases();
+    } else {
+      setIsLoading(false);
+    }
+  }, [connectionId, mongodbUri]);
+
+  const handleConnectionIdChange = (newConnectionId: string | null) => {
+    setConnectionId(newConnectionId);
+    if (propOnConnectionIdChange) {
+      propOnConnectionIdChange(newConnectionId);
+    }
+  };
+
+  const fetchConnectionCollections = async () => {
+    if (!connectionId) return;
+    
     setIsLoading(true);
     setError('');
     try {
-      const databasesList = await apiService.getDatabases();
+      console.log(`Fetching collections for connection: ${connectionId}`);
+      const response = await apiService.getConnectionCollections(connectionId);
+      setConnectionProvider(response.provider);
+      
+      // Format collections based on provider
+      if (response.provider === 'mongo') {
+        // For MongoDB, use existing getDatabases
+        const dbs = await apiService.getDatabases(connectionId);
+        console.log(`Loaded ${dbs.length} MongoDB databases via connection ID`);
+        setDatabases(dbs);
+      } else {
+        // For other providers, create a flat list structure
+        const flatDatabases: Database[] = [{
+          name: response.provider,
+          collections: response.collections
+        }];
+        console.log(`Loaded ${response.collections.length} collections from ${response.provider}`);
+        setDatabases(flatDatabases);
+      }
+      
+      setConnectionStatus('connected');
+    } catch (err: any) {
+      setConnectionStatus('disconnected');
+      setError(err.response?.data?.error || err.message || 'Failed to load collections');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const loadDefaultUri = async () => {
+    try {
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/config/mongodb-uri`);
+      if (response.ok) {
+        const data = await response.json();
+        if (data.default_uri) {
+          // Check localStorage first, then use default
+          const storedUri = localStorage.getItem('mongodb_uri');
+          if (storedUri) {
+            setUriInput(storedUri);
+            onMongodbUriChange(storedUri);
+          } else {
+            setUriInput(data.default_uri);
+            onMongodbUriChange(data.default_uri);
+            localStorage.setItem('mongodb_uri', data.default_uri);
+          }
+        }
+      } else {
+        // If config endpoint fails, try localStorage
+        const storedUri = localStorage.getItem('mongodb_uri');
+        if (storedUri) {
+          setUriInput(storedUri);
+          onMongodbUriChange(storedUri);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading default URI:', err);
+      // Use stored URI from localStorage if available
+      const storedUri = localStorage.getItem('mongodb_uri');
+      if (storedUri) {
+        setUriInput(storedUri);
+        onMongodbUriChange(storedUri);
+      }
+    }
+  };
+
+  const handleConnect = async () => {
+    if (!uriInput.trim()) {
+      setError('Please enter a MongoDB URI');
+      return;
+    }
+
+    setIsConnecting(true);
+    setConnectionStatus('testing');
+    setError('');
+    
+    try {
+      // Test connection by trying to fetch databases
+      await apiService.getDatabases(undefined, uriInput.trim());
+      setConnectionStatus('connected');
+      
+      // Save to localStorage
+      localStorage.setItem('mongodb_uri', uriInput.trim());
+      onMongodbUriChange(uriInput.trim());
+      
+      // Refresh databases will happen automatically via useEffect
+    } catch (err: any) {
+      setConnectionStatus('disconnected');
+      
+      // Better error handling for network errors
+      let errorMessage = 'Connection failed';
+      
+      if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
+        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+        const baseUrl = backendUrl.replace('/api', '');
+        errorMessage = `Cannot connect to backend server. Please ensure the backend is running on ${baseUrl}`;
+      } else if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
+      setError(errorMessage);
+      console.error('Connection error:', err);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
+
+  const fetchDatabases = async () => {
+    if (!mongodbUri || !mongodbUri.trim()) {
+      setIsLoading(false);
+      return;
+    }
+    
+    setIsLoading(true);
+    setError('');
+    try {
+      console.log('Fetching databases with MongoDB URI...');
+      const databasesList = await apiService.getDatabases(undefined, mongodbUri);
+      console.log(`Loaded ${databasesList.length} databases`);
       setDatabases(databasesList);
+      setConnectionStatus('connected');
       
       // Auto-expand first database
       if (databasesList.length > 0) {
@@ -37,12 +232,26 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
       }
       
       // Auto-select first collection if none selected
-      if (!selectedCollection && databasesList.length > 0 && databasesList[0].collections.length > 0) {
+      if (selectedCollections.size === 0 && databasesList.length > 0 && databasesList[0].collections.length > 0) {
         const firstCollection = `${databasesList[0].name}.${databasesList[0].collections[0]}`;
-        onCollectionChange(firstCollection);
+        onCollectionsChange(new Set([firstCollection]));
       }
     } catch (err: any) {
-      const errorMessage = err.response?.data?.error || err.message || 'Failed to load databases';
+      setConnectionStatus('disconnected');
+      
+      // Better error handling for network errors
+      let errorMessage = 'Failed to load databases';
+      
+      if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
+        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+        const baseUrl = backendUrl.replace('/api', '');
+        errorMessage = `Cannot connect to backend server. Please ensure the backend is running on ${baseUrl}`;
+      } else if (err.response?.data?.error) {
+        errorMessage = err.response.data.error;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
       setError(errorMessage);
       console.error('Error fetching databases:', err);
     } finally {
@@ -62,21 +271,145 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     });
   };
 
-  const handleCollectionClick = (dbName: string, collectionName: string) => {
+  const handleCollectionToggle = (dbName: string, collectionName: string, e?: React.MouseEvent | React.ChangeEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
     const fullPath = `${dbName}.${collectionName}`;
-    onCollectionChange(fullPath);
+    const newSelections = new Set(selectedCollections);
+    if (newSelections.has(fullPath)) {
+      newSelections.delete(fullPath);
+    } else {
+      newSelections.add(fullPath);
+    }
+    onCollectionsChange(newSelections);
+  };
+
+  const handleDatabaseToggle = (dbName: string, e?: React.MouseEvent | React.ChangeEvent) => {
+    if (e) {
+      e.stopPropagation();
+    }
+    const database = databases.find(db => db.name === dbName);
+    if (!database) return;
+
+    const dbCollections = database.collections.map(coll => `${dbName}.${coll}`);
+    const allSelected = dbCollections.every(path => selectedCollections.has(path));
+    
+    const newSelections = new Set(selectedCollections);
+    if (allSelected) {
+      // Deselect all collections in this database
+      dbCollections.forEach(path => newSelections.delete(path));
+    } else {
+      // Select all collections in this database
+      dbCollections.forEach(path => newSelections.add(path));
+    }
+    onCollectionsChange(newSelections);
+  };
+
+  const getDatabaseSelectionState = (dbName: string): 'all' | 'some' | 'none' => {
+    const database = databases.find(db => db.name === dbName);
+    if (!database) return 'none';
+
+    const dbCollections = database.collections.map(coll => `${dbName}.${coll}`);
+    const selectedCount = dbCollections.filter(path => selectedCollections.has(path)).length;
+    
+    if (selectedCount === 0) return 'none';
+    if (selectedCount === dbCollections.length) return 'all';
+    return 'some';
   };
 
 
   return (
     <div className="h-full flex flex-col">
+      {/* Connection Section */}
+      <div className="p-4 border-b" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: '#f9fafb' }}>
+        <h3 className="text-sm font-semibold text-mongodb-darkGray mb-2">
+          Vector Store Connection
+        </h3>
+        {connectionId ? (
+          <ConnectionSelector
+            selectedConnectionId={connectionId}
+            onConnectionChange={handleConnectionIdChange}
+            onAddConnection={() => setIsModalOpen(true)}
+          />
+        ) : (
+          // Fallback to MongoDB URI input for backward compatibility
+          <div className="space-y-2">
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                value={uriInput}
+                onChange={(e) => setUriInput(e.target.value)}
+                placeholder="mongodb+srv://..."
+                className="flex-1 text-xs px-2 py-1.5 border rounded focus:outline-none focus:ring-1 focus:ring-green-500"
+                style={{ borderColor: 'var(--color-border-muted)' }}
+                disabled={isConnecting}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !isConnecting && uriInput.trim()) {
+                    handleConnect();
+                  }
+                }}
+              />
+              <button
+                onClick={handleConnect}
+                disabled={isConnecting || !uriInput.trim()}
+                className="px-3 py-1.5 text-xs rounded font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                style={{
+                  backgroundColor: 'var(--color-accent-green)',
+                  color: 'white'
+                }}
+              >
+                {isConnecting ? (
+                  <div className="spinner" style={{ width: '12px', height: '12px' }}></div>
+                ) : (
+                  'Connect'
+                )}
+              </button>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div 
+                className="h-2 w-2 rounded-full"
+                style={{ 
+                  backgroundColor: connectionStatus === 'connected' 
+                    ? 'var(--color-accent-green)' 
+                    : connectionStatus === 'testing'
+                    ? '#FFA500'
+                    : '#ef4444'
+                }}
+              ></div>
+              <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                {connectionStatus === 'connected' ? 'Connected' : connectionStatus === 'testing' ? 'Testing...' : 'Disconnected'}
+              </span>
+            </div>
+            <div className="text-xs text-gray-500">
+              <button onClick={() => setIsModalOpen(true)} className="underline">
+                Or use multi-provider connections
+              </button>
+            </div>
+            {error && (
+              <div className="text-xs text-red-600 mt-1 break-words">{error}</div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Connection Modal */}
+      <ConnectionModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        onConnectionSelected={(id) => {
+          handleConnectionIdChange(id);
+          setIsModalOpen(false);
+        }}
+      />
+
       {/* Header */}
       <div className="p-4 border-b flex items-center justify-between" style={{ borderColor: 'var(--color-border-muted)' }}>
         <h2 className="text-lg font-semibold text-mongodb-darkGray">
           Collections
         </h2>
         <button
-          onClick={fetchDatabases}
+          onClick={() => connectionId ? fetchConnectionCollections() : fetchDatabases()}
           className="text-sm p-1 rounded hover:bg-gray-100"
           style={{ color: 'var(--color-accent-green)' }}
           title="Refresh collections"
@@ -98,7 +431,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
           <div className="p-4 bg-red-50 border-l-4 border-red-500 rounded-r-md">
             <p className="text-red-700 font-medium text-sm">Error: {error}</p>
             <button
-              onClick={fetchDatabases}
+              onClick={() => connectionId ? fetchConnectionCollections() : fetchDatabases()}
               className="mt-2 text-sm text-red-700 underline hover:text-red-900"
             >
               Retry
@@ -107,7 +440,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
         ) : databases.length === 0 ? (
           <div className="text-center py-8">
             <p className="text-sm" style={{ color: 'var(--color-text-muted)' }}>
-              No databases found
+              No databases found. Please connect to MongoDB.
             </p>
           </div>
         ) : (
@@ -133,6 +466,13 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                       >
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                       </svg>
+                      {/* Database Checkbox */}
+                      <DatabaseCheckbox
+                        key={`${database.name}-${getDatabaseSelectionState(database.name)}`}
+                        dbName={database.name}
+                        selectionState={getDatabaseSelectionState(database.name)}
+                        onToggle={handleDatabaseToggle}
+                      />
                       <svg
                         className="h-4 w-4 flex-shrink-0"
                         fill="none"
@@ -145,6 +485,9 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                       <span className="font-medium text-sm truncate" style={{ color: 'var(--color-text-dark)' }}>
                         {database.name}
                       </span>
+                      {connectionProvider && connectionProvider !== 'mongo' && (
+                        <ProviderBadge provider={connectionProvider as any} size="sm" />
+                      )}
                     </div>
                     <span className="text-xs px-2 py-0.5 rounded ml-2" style={{ 
                       backgroundColor: 'var(--color-accent-green)', 
@@ -159,14 +502,14 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                     <div className="border-t pl-4 pr-2 py-1" style={{ borderColor: 'var(--color-border-muted)' }}>
                       {database.collections.map((collection) => {
                         const fullPath = `${database.name}.${collection}`;
-                        const isSelected = selectedCollection === fullPath;
+                        const isSelected = selectedCollections.has(fullPath);
                         
                         return (
                           <div
                             key={collection}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleCollectionClick(database.name, collection);
+                              handleCollectionToggle(database.name, collection);
                             }}
                             className={`p-2 mb-1 rounded cursor-pointer transition-all ${
                               isSelected
@@ -178,17 +521,25 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                             }}
                           >
                             <div className="flex items-center space-x-2">
-                              {isSelected && (
-                                <svg className="h-4 w-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20" style={{ color: 'var(--color-accent-green)' }}>
-                                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                                </svg>
-                              )}
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => {
+                                  handleCollectionToggle(database.name, collection);
+                                }}
+                                onClick={(e) => e.stopPropagation()}
+                                className="h-4 w-4 rounded cursor-pointer"
+                                style={{ 
+                                  accentColor: 'var(--color-accent-green)',
+                                  borderColor: 'var(--color-border-muted)'
+                                }}
+                              />
                               <svg
                                 className="h-3 w-3 flex-shrink-0"
                                 fill="none"
                                 stroke="currentColor"
                                 viewBox="0 0 24 24"
-                                style={{ color: 'var(--color-text-muted)' }}
+                                style={{ color: isSelected ? 'var(--color-accent-green)' : 'var(--color-text-muted)' }}
                               >
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                               </svg>
@@ -197,6 +548,9 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                               }}>
                                 {collection}
                               </span>
+                              {connectionProvider && (
+                                <ProviderBadge provider={connectionProvider as any} size="sm" />
+                              )}
                             </div>
                           </div>
                         );
@@ -213,8 +567,17 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
       {/* Footer */}
       {databases.length > 0 && (
         <div className="p-4 border-t text-xs" style={{ borderColor: 'var(--color-border-muted)', color: 'var(--color-text-muted)' }}>
-          {databases.length} database{databases.length !== 1 ? 's' : ''} • {' '}
-          {databases.reduce((sum, db) => sum + db.collections.length, 0)} collection{databases.reduce((sum, db) => sum + db.collections.length, 0) !== 1 ? 's' : ''}
+          <div className="flex items-center justify-between">
+            <span>
+              {databases.length} database{databases.length !== 1 ? 's' : ''} • {' '}
+              {databases.reduce((sum, db) => sum + db.collections.length, 0)} collection{databases.reduce((sum, db) => sum + db.collections.length, 0) !== 1 ? 's' : ''}
+            </span>
+            {selectedCollections.size > 0 && (
+              <span className="font-medium" style={{ color: 'var(--color-accent-green)' }}>
+                {selectedCollections.size} selected
+              </span>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -222,4 +585,3 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
 };
 
 export default CollectionSelector;
-

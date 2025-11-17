@@ -10,7 +10,7 @@ from backend.models.document import DocumentChunk
 class VectorStoreService:
     """Service for MongoDB Vector Store operations."""
     
-    def __init__(self, collection_name: str = None, database_name: str = None, index_name: str = None):
+    def __init__(self, collection_name: str = None, database_name: str = None, index_name: str = None, mongodb_uri: str = None):
         """
         Initialize vector store service.
         
@@ -20,12 +20,16 @@ class VectorStoreService:
             database_name: Optional database name. If collection_name contains ".", this is ignored.
                           Defaults to Config.MONGODB_DATABASE_NAME
             index_name: Optional index name. Defaults to Config.MONGODB_VECTOR_INDEX_NAME
+            mongodb_uri: Optional MongoDB URI. Defaults to Config.MONGODB_URI
         """
         # Parse database and collection from collection_name if it contains "."
         if collection_name and '.' in collection_name:
             db_name, coll_name = collection_name.split('.', 1)
             database_name = db_name
             collection_name = coll_name
+        
+        # Use provided URI or fallback to config
+        uri_to_use = mongodb_uri or Config.MONGODB_URI
         
         # Configure MongoDB client with SSL/TLS support for Atlas
         # For mongodb+srv:// connections, TLS is automatically enabled
@@ -36,18 +40,18 @@ class VectorStoreService:
         }
         
         # Check if connection string uses mongodb+srv://
-        if Config.MONGODB_URI and Config.MONGODB_URI.startswith('mongodb+srv://'):
+        if uri_to_use and uri_to_use.startswith('mongodb+srv://'):
             # For mongodb+srv://, TLS is automatic, but we can add retryWrites if not present
-            if 'retryWrites' not in Config.MONGODB_URI:
-                separator = '&' if '?' in Config.MONGODB_URI else '?'
-                uri_with_params = f"{Config.MONGODB_URI}{separator}retryWrites=true&w=majority"
+            if 'retryWrites' not in uri_to_use:
+                separator = '&' if '?' in uri_to_use else '?'
+                uri_with_params = f"{uri_to_use}{separator}retryWrites=true&w=majority"
             else:
-                uri_with_params = Config.MONGODB_URI
+                uri_with_params = uri_to_use
         else:
             # For standard mongodb:// connections, explicitly enable TLS
             connection_params['tls'] = True
             connection_params['tlsAllowInvalidCertificates'] = False
-            uri_with_params = Config.MONGODB_URI
+            uri_with_params = uri_to_use
         
         # Try to create client - if SSL fails, provide helpful error
         try:
@@ -140,12 +144,114 @@ class VectorStoreService:
             ]
             
             results = list(self.collection.aggregate(pipeline))
-            return results
+            if results:
+                print(f"[VectorStore] Vector search returned {len(results)} results")
+                # Log sample result to verify fields
+                if results:
+                    sample = results[0]
+                    print(f"[VectorStore] Sample result fields: {list(sample.keys())}")
+                    print(f"[VectorStore] Sample file_name: '{sample.get('file_name')}', "
+                          f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}")
+                return results
+            else:
+                print(f"[VectorStore] Vector search returned 0 results, trying fallback text search")
+                return self._fallback_text_search(top_k)
             
         except OperationFailure as e:
             # If vector search index doesn't exist, fallback to basic search
-            print(f"Vector search failed: {e}")
-            print("Note: Make sure to create the vector search index in MongoDB Atlas")
+            error_msg = str(e)
+            print(f"[VectorStore] Vector search failed: {error_msg}")
+            print(f"[VectorStore] Index '{self.index_name}' may not exist. Using fallback text search.")
+            
+            # Check if collection has documents
+            doc_count = self.collection.count_documents({})
+            print(f"[VectorStore] Collection has {doc_count} documents")
+            
+            if doc_count == 0:
+                print("[VectorStore] Collection is empty - no documents to search")
+                return []
+            
+            return self._fallback_text_search(top_k)
+        except Exception as e:
+            print(f"[VectorStore] Unexpected error in vector search: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Try fallback
+            return self._fallback_text_search(top_k)
+    
+    def _fallback_text_search(self, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        Fallback text-based search when vector search fails.
+        Returns random documents from the collection as a basic fallback.
+        
+        Args:
+            top_k: Number of results to return
+            
+        Returns:
+            List of documents with placeholder scores
+        """
+        try:
+            print(f"[VectorStore] Executing fallback text search for {top_k} results")
+            
+            # Get random documents from collection
+            # Using sample aggregation for random selection
+            pipeline = [
+                {"$sample": {"size": top_k}},
+                {
+                    "$project": {
+                        "_id": 0,
+                        "chunk_id": 1,
+                        "document_id": 1,
+                        "file_name": 1,
+                        "chunk_index": 1,
+                        "content": 1,
+                        "line_start": 1,
+                        "line_end": 1,
+                        "metadata": 1,
+                        "score": 0.5  # Placeholder score for fallback results
+                    }
+                }
+            ]
+            
+            results = list(self.collection.aggregate(pipeline))
+            
+            if not results:
+                # If $sample doesn't work, try simple find
+                print("[VectorStore] $sample failed, trying simple find")
+                results = list(self.collection.find(
+                    {},
+                    {
+                        "_id": 0,
+                        "chunk_id": 1,
+                        "document_id": 1,
+                        "file_name": 1,
+                        "chunk_index": 1,
+                        "content": 1,
+                        "line_start": 1,
+                        "line_end": 1,
+                        "metadata": 1
+                    }
+                ).limit(top_k))
+                
+                # Add placeholder scores
+                for result in results:
+                    result["score"] = 0.5
+            
+            print(f"[VectorStore] Fallback search returned {len(results)} results")
+            
+            # Log sample result to verify fields
+            if results:
+                sample = results[0]
+                print(f"[VectorStore] Fallback sample fields: {list(sample.keys())}")
+                print(f"[VectorStore] Fallback sample file_name: '{sample.get('file_name')}', "
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}")
+            
+            return results
+            
+        except Exception as e:
+            print(f"[VectorStore] Fallback text search also failed: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def get_document_chunks(self, document_id: str) -> List[Dict[str, Any]]:

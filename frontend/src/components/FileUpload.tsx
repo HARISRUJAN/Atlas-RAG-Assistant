@@ -10,9 +10,11 @@ interface FileUploadProps {
   onUploadSuccess: (response: UploadResponse) => void;
   uploadedFiles: UploadedFile[];
   onFileSelectionToggle: (documentId: string) => void;
+  connectionId?: string | null;
+  mongodbUri?: string;
 }
 
-const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, uploadedFiles, onFileSelectionToggle }) => {
+const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, uploadedFiles, onFileSelectionToggle, connectionId, mongodbUri }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string>('');
@@ -60,7 +62,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onUploadSuccess, uploadedFiles,
     setIsUploading(true);
 
     try {
-      const response = await apiService.uploadFile(file);
+      const response = await apiService.uploadFile(file, connectionId || undefined, mongodbUri);
       setSuccess(`Successfully uploaded: ${response.file_name} (${response.total_chunks} chunks)`);
       onUploadSuccess(response);
       

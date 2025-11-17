@@ -6,30 +6,46 @@ FROM python:3.11-slim
 WORKDIR /app
 
 # Install system dependencies
+# Added build-essential for compiling cryptography and other native extensions
+# Added curl for health checks
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements file
 COPY requirements.txt .
 
 # Install Python dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Upgrade pip first for better package resolution
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Copy backend code
 COPY backend/ ./backend/
-COPY .env .env
+
+# Copy .env if it exists (optional, can be overridden by docker-compose)
+COPY .env* ./
 
 # Create uploads directory
-RUN mkdir -p uploads
+RUN mkdir -p uploads && chmod 755 uploads
 
-# Expose port
+# Expose port (default 5000, can be overridden)
 EXPOSE 5000
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV FLASK_APP=backend.app
+ENV FLASK_PORT=5000
+ENV PYTHONPATH=/app
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:${FLASK_PORT}/api/health || exit 1
 
 # Run the application
 CMD ["python", "-m", "backend.app"]

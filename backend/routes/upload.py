@@ -31,6 +31,11 @@ def upload_file():
         return jsonify({'error': error_message}), 400
     
     try:
+        # Get connection ID or MongoDB URI (for backward compatibility)
+        # Connection ID can come from form data or headers
+        connection_id = request.form.get('connection_id') or request.headers.get('X-Connection-ID')
+        mongodb_uri = request.headers.get('X-MongoDB-URI')
+        
         # Process document
         processor = DocumentProcessor()
         metadata, chunks = processor.process_file(file)
@@ -45,8 +50,17 @@ def upload_file():
             chunk.embedding = embedding
         
         # Store in vector database
-        vector_store = VectorStoreService()
-        stored_count = vector_store.store_chunks(chunks)
+        if connection_id:
+            # Use unified vector store with connection ID
+            from backend.services.unified_vector_store import UnifiedVectorStore
+            unified_store = UnifiedVectorStore(connection_ids=[connection_id])
+            stored_count = unified_store.store_chunks(chunks, connection_id=connection_id)
+            unified_store.close()
+        else:
+            # Backward compatibility: use MongoDB URI
+            vector_store = VectorStoreService(mongodb_uri=mongodb_uri)
+            stored_count = vector_store.store_chunks(chunks)
+            vector_store.close()
         
         return jsonify({
             'message': 'File uploaded and processed successfully',

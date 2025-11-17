@@ -153,7 +153,7 @@ class RAGService:
             model=LLM_MODEL
         )
         
-        # Create RAG chain
+        # Create RAG chain #############################################################################################
         self.qa_chain = RetrievalQA.from_chain_type(
             llm=self.llm,
             chain_type="stuff",

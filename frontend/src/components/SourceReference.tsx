@@ -10,7 +10,7 @@ interface SourceReferenceProps {
   isTopMatch?: boolean;
 }
 
-const SourceReference: React.FC<SourceReferenceProps> = ({ source, index, isTopMatch = false }) => {
+const SourceReference: React.FC<SourceReferenceProps> = ({ source, isTopMatch = false }) => {
   const scorePercentage = Math.round((source.relevance_score || 0) * 100);
   
   return (
