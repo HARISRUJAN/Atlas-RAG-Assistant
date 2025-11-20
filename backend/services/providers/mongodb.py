@@ -40,16 +40,24 @@ class MongoDBProvider(VectorStoreProvider):
     
     def test_connection(self) -> bool:
         """Test MongoDB connection."""
+        client = None
         try:
             client = MongoClient(self.uri, serverSelectionTimeoutMS=5000)
             client.admin.command('ping')
-            client.close()
             return True
-        except (ConnectionFailure, Exception):
+        except (ConnectionFailure, Exception) as e:
+            print(f"[MongoDBProvider] Connection test failed: {e}")
             return False
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception:
+                    pass
     
     def list_collections(self) -> List[str]:
         """List MongoDB databases and collections."""
+        client = None
         try:
             client = MongoClient(self.uri, serverSelectionTimeoutMS=5000)
             
@@ -69,11 +77,18 @@ class MongoDBProvider(VectorStoreProvider):
                 for coll_name in filtered_collections:
                     collections.append(f"{db_name}.{coll_name}")
             
-            client.close()
             return collections
         except Exception as e:
-            print(f"Error listing MongoDB collections: {e}")
+            print(f"[MongoDBProvider] Error listing MongoDB collections: {e}")
+            import traceback
+            traceback.print_exc()
             return []
+        finally:
+            if client:
+                try:
+                    client.close()
+                except Exception as e:
+                    print(f"[MongoDBProvider] Error closing client in list_collections: {e}")
     
     def vector_search(
         self,
@@ -83,8 +98,10 @@ class MongoDBProvider(VectorStoreProvider):
         **kwargs
     ) -> List[Dict[str, Any]]:
         """Perform vector search in MongoDB."""
+        vector_store = None
         try:
             print(f"[MongoDBProvider] Starting vector search (collection: {collection_name}, top_k: {top_k})")
+            print(f"[MongoDBProvider] Query embedding dimension: {len(query_embedding)}")
             vector_store = self._get_vector_store(collection_name)
             
             # Validate collection has documents
@@ -93,12 +110,27 @@ class MongoDBProvider(VectorStoreProvider):
             
             if doc_count == 0:
                 print(f"[MongoDBProvider] WARNING: Collection is empty")
-                vector_store.close()
                 return []
             
             results = vector_store.vector_search(query_embedding, top_k)
             print(f"[MongoDBProvider] Vector search returned {len(results)} results")
-            vector_store.close()
+            
+            # Log field extraction details
+            if results:
+                print(f"[MongoDBProvider] Sample result fields: {list(results[0].keys())}")
+                sample = results[0]
+                print(f"[MongoDBProvider] Sample values - file_name: '{sample.get('file_name')}', "
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}, "
+                      f"content_length: {len(sample.get('content', ''))}, score: {sample.get('score')}")
+                
+                # Count results with missing fields
+                missing_file_name = sum(1 for r in results if not r.get('file_name') or (isinstance(r.get('file_name'), str) and r.get('file_name', '').strip() == ''))
+                missing_content = sum(1 for r in results if not r.get('content') or (isinstance(r.get('content'), str) and r.get('content', '').strip() == ''))
+                if missing_file_name > 0:
+                    print(f"[MongoDBProvider] WARNING: {missing_file_name} results missing file_name")
+                if missing_content > 0:
+                    print(f"[MongoDBProvider] WARNING: {missing_content} results missing content")
+            
             return results
         except Exception as e:
             error_msg = f"Error in MongoDB vector search: {str(e)}"
@@ -106,6 +138,12 @@ class MongoDBProvider(VectorStoreProvider):
             import traceback
             traceback.print_exc()
             return []
+        finally:
+            if vector_store:
+                try:
+                    vector_store.close()
+                except Exception as e:
+                    print(f"[MongoDBProvider] Error closing vector_store in vector_search: {e}")
     
     def store_chunks(
         self,
@@ -114,17 +152,40 @@ class MongoDBProvider(VectorStoreProvider):
         **kwargs
     ) -> int:
         """Store chunks in MongoDB."""
+        vector_store = None
         try:
+            if not chunks:
+                print(f"[MongoDBProvider] No chunks to store")
+                return 0
+            
             vector_store = self._get_vector_store(collection_name)
             count = vector_store.store_chunks(chunks)
-            vector_store.close()
+            print(f"[MongoDBProvider] Stored {count} chunks in MongoDB")
             return count
         except Exception as e:
-            print(f"Error storing chunks in MongoDB: {e}")
+            error_msg = f"Error storing chunks in MongoDB: {str(e)}"
+            print(f"[MongoDBProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return 0
+        finally:
+            if vector_store:
+                try:
+                    vector_store.close()
+                except Exception as e:
+                    print(f"[MongoDBProvider] Error closing vector_store in store_chunks: {e}")
     
     def close(self):
         """Close MongoDB connection."""
         if self.client:
-            self.client.close()
+            try:
+                self.client.close()
+            except Exception as e:
+                print(f"[MongoDBProvider] Error closing client: {e}")
+        # Also close any vector_store instances if they exist
+        if self.vector_store:
+            try:
+                self.vector_store.close()
+            except Exception as e:
+                print(f"[MongoDBProvider] Error closing vector_store: {e}")
 

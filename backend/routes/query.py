@@ -5,6 +5,7 @@ from flask import Blueprint, request, jsonify
 from backend.config import Config
 from backend.models.query import QueryRequest
 from backend.services.rag_service import RAGService
+from backend.services.collection_service import validate_collection_for_query
 
 query_bp = Blueprint('query', __name__)
 
@@ -32,13 +33,32 @@ def query_documents():
         query_request = QueryRequest.from_dict(data)
         
         # Process query through RAG pipeline
+        # Check if pipeline mode is requested (default: True for new pipeline)
+        use_pipeline = data.get('use_pipeline', True)
+        
+        # Support vector_collection parameter for pipeline mode (e.g., "srugenai_db.movies")
+        vector_collection = data.get('vector_collection')  # Can be "database.collection" format
+        
         collection_names = query_request.collection_names if query_request.collection_names else (
             [query_request.collection_name] if query_request.collection_name else None
         )
         
+        # If vector_collection is specified, use it for pipeline mode
+        if vector_collection and use_pipeline:
+            collection_names = [vector_collection]
+        
+        # Validate collections before querying
+        if collection_names:
+            for coll_name in collection_names:
+                is_valid, error_msg = validate_collection_for_query(coll_name, mongodb_uri)
+                if not is_valid:
+                    print(f"[Query Route] Invalid collection '{coll_name}': {error_msg}")
+                    return jsonify({'error': error_msg}), 400
+        
         # Log collection selection for debugging
         print(f"[Query Route] Received query: '{query_request.query[:100]}...'")
         print(f"[Query Route] Collection names received: {collection_names}")
+        print(f"[Query Route] Vector collection: {vector_collection}")
         print(f"[Query Route] Connection IDs: {connection_ids}")
         print(f"[Query Route] MongoDB URI provided: {mongodb_uri is not None}")
         
@@ -46,13 +66,16 @@ def query_documents():
         if connection_ids:
             rag_service = RAGService(
                 connection_ids=connection_ids,
-                collection_names=collection_names
+                collection_names=collection_names,
+                use_pipeline=False  # Multi-provider mode doesn't use pipeline
             )
         else:
-            # Backward compatibility: use MongoDB URI
+            # Use new pipeline mode by default (vector_data collection)
+            # Or legacy mode if explicitly disabled
             rag_service = RAGService(
                 collection_names=collection_names,
-                mongodb_uri=mongodb_uri
+                mongodb_uri=mongodb_uri,
+                use_pipeline=use_pipeline
             )
         
         response = rag_service.query(query_request)

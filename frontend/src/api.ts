@@ -8,7 +8,8 @@ import type {
   Connection, ConnectionCreateRequest, ConnectionCollectionsResponse
 } from './types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// Use relative URL to leverage Vite proxy (configured in vite.config.ts to proxy to port 5002)
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -66,7 +67,8 @@ export const apiService = {
     topK: number = 5, 
     collectionNames?: string | string[], 
     connectionIds?: string[],
-    mongodbUri?: string
+    mongodbUri?: string,
+    vectorCollection?: string
   ): Promise<QueryResponse> {
     const headers: Record<string, string> = {};
     if (mongodbUri) {
@@ -77,6 +79,7 @@ export const apiService = {
     const payload: any = {
       query,
       top_k: topK,
+      use_pipeline: true,
     };
     
     if (connectionIds && connectionIds.length > 0) {
@@ -88,6 +91,11 @@ export const apiService = {
     } else if (collectionNames) {
       // Backward compatibility: single string becomes collection_name
       payload.collection_name = collectionNames;
+    }
+    
+    // Add vector_collection for pipeline mode (database.collection format, e.g., "srugenai_db.movies")
+    if (vectorCollection) {
+      payload.vector_collection = vectorCollection;
     }
     
     const response = await api.post<QueryResponse>('/query', payload, { headers });
@@ -204,6 +212,121 @@ export const apiService = {
    */
   async getConnectionCollections(connectionId: string): Promise<ConnectionCollectionsResponse> {
     const response = await api.get<ConnectionCollectionsResponse>(`/connections/${connectionId}/collections`);
+    return response.data;
+  },
+
+  // Ingestion pipeline methods
+  /**
+   * List raw documents
+   */
+  async getRawDocuments(params?: {
+    status?: string;
+    origin_source_type?: string;
+    origin_source_id?: string;
+    limit?: number;
+    skip?: number;
+  }, mongodbUri?: string): Promise<{ raw_documents: any[]; count: number }> {
+    const headers: Record<string, string> = {};
+    // Only add header if mongodbUri is provided and not empty
+    if (mongodbUri && mongodbUri.trim()) {
+      headers['X-MongoDB-URI'] = mongodbUri.trim();
+    }
+    const response = await api.get<{ raw_documents: any[]; count: number }>('/ingest/raw', { params, headers });
+    return response.data;
+  },
+
+  /**
+   * Get a raw document
+   */
+  async getRawDocument(rawDocumentId: string): Promise<any> {
+    const response = await api.get<any>(`/ingest/raw/${rawDocumentId}`);
+    return response.data;
+  },
+
+  /**
+   * Process raw documents into vector data
+   */
+  async processRawDocuments(rawDocumentIds: string[], targetCollection?: string): Promise<any> {
+    const response = await api.post<any>('/ingest/process', {
+      raw_document_ids: rawDocumentIds,
+      target_collection: targetCollection
+    });
+    return response.data;
+  },
+
+  /**
+   * Ingest document from origin source
+   */
+  async ingestFromOrigin(data: {
+    origin_source_type: string;
+    origin_id: string;
+    origin_source_id?: string;
+    connection_config: any;
+    skip_duplicates?: boolean;
+  }, mongodbUri?: string): Promise<{ raw_document_id: string; status: string; reason?: string }> {
+    const headers: Record<string, string> = {};
+    if (mongodbUri) {
+      headers['X-MongoDB-URI'] = mongodbUri;
+    }
+    const response = await api.post<{ raw_document_id: string; status: string }>('/ingest/origin', data, { headers });
+    return response.data;
+  },
+
+  /**
+   * Get ingestion status
+   */
+  async getIngestionStatus(): Promise<{ status_counts: Record<string, number>; total: number }> {
+    const response = await api.get<{ status_counts: Record<string, number>; total: number }>('/ingest/status');
+    return response.data;
+  },
+
+  /**
+   * Delete raw document
+   */
+  async deleteRawDocument(rawDocumentId: string): Promise<{ message: string; raw_document_id: string }> {
+    const response = await api.delete<{ message: string; raw_document_id: string }>(`/ingest/raw/${rawDocumentId}`);
+    return response.data;
+  },
+
+  // Origin source methods
+  /**
+   * List available origin source types
+   */
+  async getOriginSourceTypes(): Promise<any[]> {
+    const response = await api.get<{ source_types: any[] }>('/origin/sources');
+    return response.data.source_types;
+  },
+
+  /**
+   * Test connection to origin source
+   */
+  async testOriginConnection(sourceType: string, connectionConfig: any): Promise<{ status: string; message: string }> {
+    const response = await api.post<{ status: string; message: string }>('/origin/connect', {
+      source_type: sourceType,
+      connection_config: connectionConfig
+    });
+    return response.data;
+  },
+
+  /**
+   * List documents from origin source
+   */
+  async listOriginDocuments(sourceType: string, connectionConfig: any, limit?: number, skip?: number): Promise<any> {
+    const response = await api.post<any>(`/origin/${sourceType}/documents`, {
+      connection_config: connectionConfig,
+      limit,
+      skip
+    });
+    return response.data;
+  },
+
+  /**
+   * Get document from origin source
+   */
+  async getOriginDocument(sourceType: string, originId: string, connectionConfig: any): Promise<any> {
+    const response = await api.post<any>(`/origin/${sourceType}/documents/${originId}`, {
+      connection_config: connectionConfig
+    });
     return response.data;
   },
 };

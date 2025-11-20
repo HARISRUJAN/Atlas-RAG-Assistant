@@ -2,11 +2,15 @@
 
 from flask import Blueprint, request, jsonify
 from werkzeug.utils import secure_filename
+import uuid
+from datetime import datetime
 
 from backend.utils.file_validator import validate_file
 from backend.services.document_processor import DocumentProcessor
 from backend.services.embedding_service import EmbeddingService
 from backend.services.vector_store import VectorStoreService
+from backend.services.raw_document_store import RawDocumentStore
+from backend.models.raw_document import RawDocument
 
 upload_bp = Blueprint('upload', __name__)
 
@@ -32,43 +36,66 @@ def upload_file():
     
     try:
         # Get connection ID or MongoDB URI (for backward compatibility)
-        # Connection ID can come from form data or headers
         connection_id = request.form.get('connection_id') or request.headers.get('X-Connection-ID')
         mongodb_uri = request.headers.get('X-MongoDB-URI')
         
-        # Process document
+        # Check if immediate processing is requested (backward compatibility)
+        immediate_process = request.form.get('immediate_process', 'false').lower() == 'true'
+        
+        # Process document to extract text
         processor = DocumentProcessor()
         metadata, chunks = processor.process_file(file)
         
-        # Generate embeddings for chunks
-        embedding_service = EmbeddingService()
-        chunk_texts = [chunk.content for chunk in chunks]
-        embeddings = embedding_service.generate_embeddings(chunk_texts)
+        # Create raw document
+        raw_doc = RawDocument(
+            raw_document_id=str(uuid.uuid4()),
+            origin_id=metadata.document_id,
+            origin_source_type='file_upload',
+            origin_source_id=connection_id,
+            raw_content='\n'.join([chunk.content for chunk in chunks]),  # Combine all chunks
+            content_type='text',
+            metadata={
+                'file_name': metadata.file_name,
+                'file_type': metadata.file_type,
+                'file_size': metadata.file_size,
+                'upload_date': metadata.upload_date.isoformat(),
+                'total_chunks': metadata.total_chunks
+            },
+            status='pending'
+        )
         
-        # Add embeddings to chunks
-        for chunk, embedding in zip(chunks, embeddings):
-            chunk.embedding = embedding
+        # Store in raw_documents collection
+        raw_store = RawDocumentStore(mongodb_uri=mongodb_uri)
+        raw_document_id = raw_store.store_raw_document(raw_doc)
         
-        # Store in vector database
-        if connection_id:
-            # Use unified vector store with connection ID
-            from backend.services.unified_vector_store import UnifiedVectorStore
-            unified_store = UnifiedVectorStore(connection_ids=[connection_id])
-            stored_count = unified_store.store_chunks(chunks, connection_id=connection_id)
-            unified_store.close()
-        else:
-            # Backward compatibility: use MongoDB URI
-            vector_store = VectorStoreService(mongodb_uri=mongodb_uri)
-            stored_count = vector_store.store_chunks(chunks)
-            vector_store.close()
-        
-        return jsonify({
-            'message': 'File uploaded and processed successfully',
+        response_data = {
+            'message': 'File uploaded successfully',
+            'raw_document_id': raw_document_id,
             'document_id': metadata.document_id,
             'file_name': metadata.file_name,
             'total_chunks': metadata.total_chunks,
-            'stored_chunks': stored_count
-        }), 200
+            'status': 'pending',
+            'note': 'Document stored in raw_documents. Use /api/ingest/process to convert to vectors.'
+        }
+        
+        # If immediate processing requested (backward compatibility)
+        if immediate_process:
+            from backend.services.ingestion_pipeline import IngestionPipeline
+            pipeline = IngestionPipeline(mongodb_uri=mongodb_uri)
+            try:
+                result = pipeline.process_raw_document(raw_document_id)
+                response_data['message'] = 'File uploaded and processed successfully'
+                response_data['status'] = 'processed'
+                response_data['chunks_stored'] = result['chunks_stored']
+                pipeline.close()
+            except Exception as e:
+                response_data['processing_error'] = str(e)
+            finally:
+                pipeline.close()
+        
+        raw_store.close()
+        
+        return jsonify(response_data), 200
         
     except ValueError as e:
         # Validation errors - provide clear message to user

@@ -12,7 +12,15 @@ from backend.config import Config
 
 
 class Connection:
-    """Model for vector store connection with encrypted credentials."""
+    """
+    Model for vector store connection with encrypted credentials.
+    
+    Note: Provider-specific configuration (e.g., database_name, collection_name, index_name)
+    is not stored in the Connection model. Instead, these values are derived from collection
+    names when they're provided in queries. For MongoDB, collection names can be in
+    "database.collection" format, and the UnifiedVectorStore extracts these values automatically.
+    This keeps the Connection model provider-agnostic and flexible.
+    """
     
     PROVIDERS = ['mongo', 'redis', 'qdrant', 'pinecone']
     SCOPES = ['list.indexes', 'read.metadata', 'read.vectors', 'write.vectors']
@@ -40,6 +48,10 @@ class Connection:
             scopes: List of granted permissions
             status: Connection status (active, inactive, error)
             created_at: Creation timestamp
+            
+        Note: Provider-specific configuration like database_name, collection_name, or index_name
+        are not stored here but are extracted from collection names when provided in queries.
+        See UnifiedVectorStore._extract_mongodb_kwargs() for details.
         """
         if provider not in self.PROVIDERS:
             raise ValueError(f"Invalid provider: {provider}. Must be one of {self.PROVIDERS}")

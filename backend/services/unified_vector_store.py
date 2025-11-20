@@ -24,12 +24,51 @@ class UnifiedVectorStore:
         self.storage = ConnectionStorage()
         self.providers = {}
     
-    def _get_provider(self, connection: Connection) -> Any:
+    def _extract_mongodb_kwargs(self, connection_id: str, collection_names: List[str]) -> Dict[str, Any]:
+        """
+        Extract MongoDB-specific kwargs from collection names.
+        
+        Args:
+            connection_id: Connection ID
+            collection_names: List of collection names for this connection
+            
+        Returns:
+            Dictionary with database_name, collection_name, index_name if extractable
+        """
+        kwargs = {}
+        
+        if not collection_names:
+            return kwargs
+        
+        # Extract common database from collection names if they're in "database.collection" format
+        databases = set()
+        collections = set()
+        
+        for coll_name in collection_names:
+            if '.' in coll_name:
+                db_name, coll_name_only = coll_name.split('.', 1)
+                databases.add(db_name)
+                collections.add(coll_name_only)
+        
+        # If all collections share the same database, use it as default
+        if len(databases) == 1:
+            kwargs['database_name'] = list(databases)[0]
+            print(f"[UnifiedVectorStore] Extracted database_name='{kwargs['database_name']}' for connection {connection_id}")
+        
+        # If all collections are the same, use it as default collection
+        if len(collections) == 1 and len(databases) <= 1:
+            kwargs['collection_name'] = list(collections)[0]
+            print(f"[UnifiedVectorStore] Extracted collection_name='{kwargs['collection_name']}' for connection {connection_id}")
+        
+        return kwargs
+    
+    def _get_provider(self, connection: Connection, collection_names: Optional[List[str]] = None) -> Any:
         """
         Get or create provider instance for connection.
         
         Args:
             connection: Connection instance
+            collection_names: Optional list of collection names for this connection (used to extract provider-specific kwargs)
             
         Returns:
             Provider instance
@@ -46,9 +85,23 @@ class UnifiedVectorStore:
             if not ProviderClass:
                 raise ValueError(f"Unknown provider: {connection.provider}")
             
+            # Extract provider-specific kwargs from collection names if available
+            provider_kwargs = {}
+            if connection.provider == 'mongo' and collection_names:
+                provider_kwargs = self._extract_mongodb_kwargs(connection.connection_id, collection_names)
+            
+            # For Pinecone, extract index_name if available
+            if connection.provider == 'pinecone' and collection_names and len(collection_names) == 1:
+                # If single collection name provided, use it as index_name
+                provider_kwargs['index_name'] = collection_names[0]
+            
+            # For Qdrant, collection names are handled at search time
+            # For Redis, index_name can be extracted similarly
+            
             self.providers[connection.connection_id] = ProviderClass(
                 uri=connection.uri,
-                api_key=connection.api_key
+                api_key=connection.api_key,
+                **provider_kwargs
             )
         
         return self.providers[connection.connection_id]
@@ -164,11 +217,11 @@ class UnifiedVectorStore:
                 
                 print(f"[UnifiedVectorStore] Searching connection {connection_id} (provider: {connection.provider})")
                 
-                # Get provider
-                provider = self._get_provider(connection)
-                
                 # Get collections for this connection
                 collections = collection_mapping.get(connection_id, [])
+                
+                # Get provider (pass collections to extract provider-specific kwargs)
+                provider = self._get_provider(connection, collection_names=collections)
                 print(f"[UnifiedVectorStore] Collections for connection {connection_id}: {collections if collections else 'all/default'}")
                 
                 if collections:
@@ -181,7 +234,7 @@ class UnifiedVectorStore:
                             if connection.provider == 'mongo':
                                 try:
                                     # Try to get provider and check if collection exists
-                                    test_provider = self._get_provider(connection)
+                                    test_provider = self._get_provider(connection, collection_names=collections)
                                     available_collections = test_provider.list_collections()
                                     
                                     # Check if collection exists (handle both "collection" and "database.collection" formats)
@@ -258,6 +311,9 @@ class UnifiedVectorStore:
             for err in errors:
                 print(f"[UnifiedVectorStore]   - {err}")
         
+        # Sanitize results before sorting to ensure consistent field structure
+        all_results = self._sanitize_results(all_results)
+        
         # Sort by score (descending) and return top_k overall
         all_results.sort(key=lambda x: x.get('score', 0.0), reverse=True)
         final_results = all_results[:top_k]
@@ -304,8 +360,9 @@ class UnifiedVectorStore:
             if not connection:
                 raise ValueError(f"Connection not found: {target_connection_id}")
             
-            # Get provider
-            provider = self._get_provider(connection)
+            # Get provider (pass collection_name if available to extract kwargs)
+            collection_names_for_provider = [collection_name] if collection_name else []
+            provider = self._get_provider(connection, collection_names=collection_names_for_provider)
             
             # Store chunks
             count = provider.store_chunks(chunks, collection_name=collection_name)
@@ -315,6 +372,81 @@ class UnifiedVectorStore:
         except Exception as e:
             print(f"Error storing chunks: {e}")
             return 0
+    
+    def _sanitize_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Sanitize search results to ensure all required fields have valid defaults.
+        Filters out results without required fields (like content).
+        
+        Args:
+            results: List of search results from providers
+            
+        Returns:
+            Sanitized list of search results with all required fields
+        """
+        sanitized = []
+        for result in results:
+            # Check if result has content (required field)
+            has_content = result.get('content') and (
+                not isinstance(result.get('content'), str) or 
+                result.get('content', '').strip() != ''
+            )
+            
+            if not has_content:
+                print(f"[UnifiedVectorStore] Skipping result without content: chunk_id={result.get('chunk_id')}")
+                continue
+            
+            # Ensure all required fields exist with proper defaults
+            sanitized_result = {
+                'chunk_id': result.get('chunk_id', ''),
+                'document_id': result.get('document_id', ''),
+                'file_name': result.get('file_name') or 'Unknown',
+                'content': result.get('content', ''),
+                'line_start': result.get('line_start') or 0,
+                'line_end': result.get('line_end') or 0,
+                'metadata': result.get('metadata') or {},
+                'score': result.get('score') or 0.0
+            }
+            
+            # Handle empty strings
+            if isinstance(sanitized_result['file_name'], str) and sanitized_result['file_name'].strip() == '':
+                sanitized_result['file_name'] = 'Unknown'
+            
+            # Ensure numeric fields are proper types
+            try:
+                sanitized_result['line_start'] = int(sanitized_result['line_start'])
+            except (ValueError, TypeError):
+                sanitized_result['line_start'] = 0
+            
+            try:
+                sanitized_result['line_end'] = int(sanitized_result['line_end'])
+            except (ValueError, TypeError):
+                sanitized_result['line_end'] = 0
+            
+            try:
+                sanitized_result['score'] = float(sanitized_result['score'])
+            except (ValueError, TypeError):
+                sanitized_result['score'] = 0.0
+            
+            # Try to extract file_name from metadata if missing
+            if sanitized_result['file_name'] == 'Unknown' and sanitized_result['metadata']:
+                meta = sanitized_result['metadata']
+                if isinstance(meta, dict):
+                    file_name = meta.get('file_name') or meta.get('filename')
+                    if file_name and isinstance(file_name, str) and file_name.strip():
+                        sanitized_result['file_name'] = file_name
+            
+            # Copy any additional fields (like connection_id, provider)
+            for key, value in result.items():
+                if key not in sanitized_result:
+                    sanitized_result[key] = value
+            
+            sanitized.append(sanitized_result)
+        
+        if len(sanitized) < len(results):
+            print(f"[UnifiedVectorStore] Sanitized {len(sanitized)} results from {len(results)} (filtered {len(results) - len(sanitized)} invalid results)")
+        
+        return sanitized
     
     def list_collections(self) -> Dict[str, List[str]]:
         """
@@ -331,7 +463,8 @@ class UnifiedVectorStore:
                 if not connection:
                     continue
                 
-                provider = self._get_provider(connection)
+                # For list_collections, we don't have specific collection names, so pass empty list
+                provider = self._get_provider(connection, collection_names=[])
                 collections = provider.list_collections()
                 result[connection_id] = collections
                 

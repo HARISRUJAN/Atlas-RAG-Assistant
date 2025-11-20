@@ -46,11 +46,13 @@ class RedisProvider(VectorStoreProvider):
         """Test Redis connection."""
         try:
             if not REDIS_SEARCH_AVAILABLE:
+                print("[RedisProvider] RediSearch not available")
                 return False
             client = self._get_client()
             client.ping()
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[RedisProvider] Connection test failed: {e}")
             return False
     
     def list_collections(self) -> List[str]:
@@ -64,12 +66,14 @@ class RedisProvider(VectorStoreProvider):
             try:
                 info = client.ft(self.index_name).info()
                 indexes.append(self.index_name)
-            except:
-                pass
+            except Exception as e:
+                print(f"[RedisProvider] Index '{self.index_name}' not found or error accessing: {e}")
             # In Redis, we typically use one index, but can have multiple
             return indexes if indexes else [self.index_name]
         except Exception as e:
-            print(f"Error listing Redis indexes: {e}")
+            print(f"[RedisProvider] Error listing Redis indexes: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def vector_search(
@@ -106,7 +110,7 @@ class RedisProvider(VectorStoreProvider):
                 if isinstance(file_name, str) and file_name.strip() == '':
                     file_name = 'Unknown'
                 
-                result = {
+                formatted_result = {
                     'chunk_id': doc.get('chunk_id', ''),
                     'document_id': doc.get('document_id', ''),
                     'file_name': file_name,
@@ -116,11 +120,22 @@ class RedisProvider(VectorStoreProvider):
                     'metadata': doc.get('metadata', {}),
                     'score': float(doc.get('__vector_score', 0.0)) if doc.get('__vector_score') else 0.0
                 }
-                formatted_results.append(result)
+                formatted_results.append(formatted_result)
+            
+            # Log field extraction details
+            if formatted_results:
+                print(f"[RedisProvider] Returned {len(formatted_results)} results")
+                sample = formatted_results[0]
+                print(f"[RedisProvider] Sample result - file_name: '{sample.get('file_name')}', "
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}, "
+                      f"content_length: {len(sample.get('content', ''))}, score: {sample.get('score')}")
             
             return formatted_results
         except Exception as e:
-            print(f"Error in Redis vector search: {e}")
+            error_msg = f"Error in Redis vector search: {str(e)}"
+            print(f"[RedisProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def store_chunks(
@@ -132,7 +147,13 @@ class RedisProvider(VectorStoreProvider):
         """Store chunks in Redis."""
         try:
             if not REDIS_SEARCH_AVAILABLE:
+                print("[RedisProvider] RediSearch not available, cannot store chunks")
                 return 0
+            
+            if not chunks:
+                print(f"[RedisProvider] No chunks to store")
+                return 0
+            
             client = self._get_client()
             index_name = collection_name or self.index_name
             
@@ -155,9 +176,13 @@ class RedisProvider(VectorStoreProvider):
                 client.hset(key, mapping=data)
                 stored += 1
             
+            print(f"[RedisProvider] Stored {stored} chunks in Redis")
             return stored
         except Exception as e:
-            print(f"Error storing chunks in Redis: {e}")
+            error_msg = f"Error storing chunks in Redis: {str(e)}"
+            print(f"[RedisProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return 0
     
     def _ensure_index(self, client: redis.Redis, index_name: str):
@@ -187,5 +212,10 @@ class RedisProvider(VectorStoreProvider):
     def close(self):
         """Close Redis connection."""
         if self.client:
-            self.client.close()
+            try:
+                self.client.close()
+            except Exception as e:
+                print(f"[RedisProvider] Error closing client: {e}")
+            finally:
+                self.client = None
 

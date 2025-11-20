@@ -1,18 +1,19 @@
 """RAG service for orchestrating retrieval and generation."""
 
 import requests
-from typing import List
+from typing import List, Optional
 from backend.config import Config
 from backend.models.query import QueryRequest, QueryResponse, SourceReference
 from backend.services.embedding_service import EmbeddingService
 from backend.services.vector_store import VectorStoreService
+from backend.services.vector_data_store import VectorDataStore
 from backend.services.unified_vector_store import UnifiedVectorStore
 
 
 class RAGService:
     """Service for Retrieval-Augmented Generation."""
     
-    def __init__(self, collection_name: str = None, collection_names: List[str] = None, database_name: str = None, index_name: str = None, mongodb_uri: str = None, connection_ids: List[str] = None):
+    def __init__(self, collection_name: str = None, collection_names: List[str] = None, database_name: str = None, index_name: str = None, mongodb_uri: str = None, connection_ids: List[str] = None, use_pipeline: bool = True):
         """
         Initialize RAG service.
         
@@ -28,8 +29,10 @@ class RAGService:
             index_name: Optional index name. Defaults to Config.MONGODB_VECTOR_INDEX_NAME
             mongodb_uri: Optional MongoDB URI. Defaults to Config.MONGODB_URI (backward compatibility)
             connection_ids: Optional list of connection IDs for multi-provider support
+            use_pipeline: If True, use vector_data collection (new pipeline). If False, use legacy mode.
         """
         self.embedding_service = EmbeddingService()
+        self.use_pipeline = use_pipeline
         
         # Use unified vector store if connection_ids provided
         if connection_ids:
@@ -41,7 +44,30 @@ class RAGService:
             )
             self.vector_stores = []
             self.vector_store = None
+            self.vector_data_store = None
             self.collection_names = collection_names
+        # Use new pipeline mode (vector_data collection)
+        elif use_pipeline:
+            # New pipeline mode: use vector_data collection
+            # collection_names can contain "database.collection" format (e.g., "srugenai_db.movies")
+            self.collection_names = None
+            self.vector_stores = []
+            self.vector_store = None
+            
+            # Determine which collection to use
+            target_collection = None
+            if collection_names and len(collection_names) == 1:
+                target_collection = collection_names[0]
+            elif collection_name:
+                target_collection = collection_name
+            
+            self.vector_data_store = VectorDataStore(
+                database_name=database_name,
+                collection_name=target_collection,  # Can be "collection" or "database.collection"
+                index_name=index_name or Config.VECTOR_DATA_INDEX_NAME,
+                mongodb_uri=mongodb_uri
+            )
+            print(f"[RAG Service] Using pipeline mode with vector_data collection: {target_collection or 'default'}")
         # Determine which collections to use (legacy MongoDB mode)
         elif collection_names:
             # Multi-collection mode
@@ -127,14 +153,44 @@ class RAGService:
         search_mode = None
         error_details = []
         
-        # Log collection selection
+        # Log collection selection and search configuration
+        print(f"\n{'='*70}")
+        print(f"[RAG Service] SEARCH CONFIGURATION")
+        print(f"{'='*70}")
         if self.collection_names:
             print(f"[RAG Service] Selected collections to search: {self.collection_names}")
         else:
             print(f"[RAG Service] No specific collections selected - searching all/default collections")
         
+        if hasattr(self, 'connection_ids') and self.connection_ids:
+            print(f"[RAG Service] Connection IDs: {self.connection_ids}")
+        print(f"[RAG Service] Query embedding dimensions: {len(query_embedding)}")
+        print(f"[RAG Service] Requested top_k: {request.top_k}")
+        print(f"{'='*70}\n")
+        
         try:
-            if hasattr(self, 'unified_store') and self.unified_store:
+            if hasattr(self, 'vector_data_store') and self.vector_data_store:
+                # New pipeline mode: use vector_data collection
+                search_mode = "pipeline-vector-data"
+                collection_full_name = f"{self.vector_data_store.database_name}.{self.vector_data_store.collection_name}"
+                print(f"[RAG Service] Using pipeline mode with vector_data collection: {collection_full_name}")
+                
+                # Check collection status before searching
+                try:
+                    chunk_count = self.vector_data_store.collection.count_documents({})
+                    print(f"[RAG Service] Collection '{collection_full_name}' has {chunk_count} chunks")
+                    if chunk_count == 0:
+                        print(f"[RAG Service] WARNING: Collection '{collection_full_name}' is empty! No data has been processed yet.")
+                        print(f"[RAG Service] Please ingest and process documents first using the Data Ingestion tab.")
+                except Exception as e:
+                    print(f"[RAG Service] Could not check collection status: {e}")
+                
+                search_results = self.vector_data_store.vector_search(
+                    query_embedding=query_embedding,
+                    top_k=request.top_k
+                )
+                print(f"[RAG Service] Vector data search returned {len(search_results)} results from {collection_full_name}")
+            elif hasattr(self, 'unified_store') and self.unified_store:
                 # Multi-provider mode
                 search_mode = "multi-provider"
                 print(f"[RAG Service] Using multi-provider mode with {len(self.connection_ids)} connection(s)")
@@ -186,6 +242,29 @@ class RAGService:
             traceback.print_exc()
             error_details.append(error_msg)
         
+        # Log search results summary
+        print(f"\n{'='*70}")
+        print(f"[RAG Service] SEARCH RESULTS SUMMARY")
+        print(f"{'='*70}")
+        print(f"[RAG Service] Search mode: {search_mode}")
+        print(f"[RAG Service] Total results retrieved: {len(search_results)}")
+        if search_results:
+            print(f"[RAG Service] Sample result keys: {list(search_results[0].keys())}")
+            # Log field statistics
+            fields_with_values = {}
+            for result in search_results:
+                for key, value in result.items():
+                    if key not in fields_with_values:
+                        fields_with_values[key] = {'total': 0, 'non_empty': 0}
+                    fields_with_values[key]['total'] += 1
+                    if value and (not isinstance(value, str) or value.strip()):
+                        fields_with_values[key]['non_empty'] += 1
+            print(f"[RAG Service] Field statistics:")
+            for field, stats in fields_with_values.items():
+                pct = (stats['non_empty'] / stats['total'] * 100) if stats['total'] > 0 else 0
+                print(f"  - {field}: {stats['non_empty']}/{stats['total']} non-empty ({pct:.1f}%)")
+        print(f"{'='*70}\n")
+        
         # Check if we have results
         if not search_results:
             # Build detailed error message
@@ -198,8 +277,36 @@ class RAGService:
             
             # Check if collections might be empty
             collection_status = []
+            empty_collection_warning = None
+            index_warning = None
             try:
-                if hasattr(self, 'unified_store') and self.unified_store:
+                if hasattr(self, 'vector_data_store') and self.vector_data_store:
+                    # Check vector_data collection
+                    try:
+                        count = self.vector_data_store.count_chunks()
+                        db_name = self.vector_data_store.database_name
+                        coll_name = self.vector_data_store.collection_name
+                        full_name = f"{db_name}.{coll_name}"
+                        collection_status.append(f"Vector data collection {full_name}: {count} chunks")
+                        if count == 0:
+                            empty_collection_warning = f"The vector collection '{full_name}' is empty. Please ingest and process documents first using the Data Ingestion tab (sample_mflix.movies → raw_documents → {full_name})."
+                        else:
+                            # Collection has data but no results - likely index issue
+                            index_name = self.vector_data_store.index_name
+                            index_warning = (
+                                f"Collection has {count} chunks but vector search returned no results. "
+                                f"This usually means the vector search index is missing or misconfigured.\n\n"
+                                f"Please verify:\n"
+                                f"1. Vector search index exists in MongoDB Atlas for '{full_name}'\n"
+                                f"2. Index name matches one of: 'default', 'vector_data_index', '{index_name}'\n"
+                                f"3. Index is in 'Active' status (not Building)\n"
+                                f"4. Index configuration includes 'embedding' field with 384 dimensions\n\n"
+                                f"To check: Run 'python setup_vector_index_for_collection.py {full_name}'"
+                            )
+                    except Exception as e:
+                        print(f"[RAG Service] Error checking collection status: {e}")
+                        pass
+                elif hasattr(self, 'unified_store') and self.unified_store:
                     # Check unified store collections
                     collections_info = self.unified_store.list_collections()
                     for conn_id, colls in collections_info.items():
@@ -226,6 +333,10 @@ class RAGService:
                 error_parts.append(f"Collection status: {'; '.join(collection_status)}")
             
             detailed_error = ". ".join(error_parts)
+            if empty_collection_warning:
+                detailed_error = f"{empty_collection_warning} {detailed_error}"
+            if index_warning:
+                detailed_error = f"{index_warning}\n\n{detailed_error}"
             print(f"[RAG Service] {detailed_error}")
             
             # Return informative error message
@@ -233,7 +344,9 @@ class RAGService:
             if Config.FLASK_DEBUG:
                 user_message += f" Debug: {detailed_error}"
             else:
-                if any("0 documents" in status for status in collection_status):
+                if index_warning:
+                    user_message += f"\n\n{index_warning}"
+                elif any("0 documents" in status or "0 chunks" in status for status in collection_status):
                     user_message += " The selected collections appear to be empty. Please upload documents first."
                 elif error_details:
                     user_message += " There was an error searching the database. Please check your connection and try again."

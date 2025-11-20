@@ -47,7 +47,8 @@ class QdrantProvider(VectorStoreProvider):
             client = self._get_client()
             client.get_collections()
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[QdrantProvider] Connection test failed: {e}")
             return False
     
     def list_collections(self) -> List[str]:
@@ -57,7 +58,9 @@ class QdrantProvider(VectorStoreProvider):
             collections = client.get_collections()
             return [coll.name for coll in collections.collections]
         except Exception as e:
-            print(f"Error listing Qdrant collections: {e}")
+            print(f"[QdrantProvider] Error listing Qdrant collections: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def vector_search(
@@ -75,19 +78,19 @@ class QdrantProvider(VectorStoreProvider):
                 # Use first available collection
                 collections = client.get_collections()
                 if not collections.collections:
-                    print("Warning: No collections found in Qdrant")
+                    print("[QdrantProvider] WARNING: No collections found in Qdrant")
                     return []
                 collection_name = collections.collections[0].name
-                print(f"Using default collection: {collection_name}")
+                print(f"[QdrantProvider] Using default collection: {collection_name}")
             
             # Verify collection exists and get its config
             try:
                 collection_info = client.get_collection(collection_name)
                 vector_size = collection_info.config.params.vectors.size
                 if len(query_embedding) != vector_size:
-                    print(f"Warning: Query embedding dimension ({len(query_embedding)}) doesn't match collection vector size ({vector_size})")
+                    print(f"[QdrantProvider] WARNING: Query embedding dimension ({len(query_embedding)}) doesn't match collection vector size ({vector_size})")
             except Exception as e:
-                print(f"Warning: Could not verify collection {collection_name}: {e}")
+                print(f"[QdrantProvider] WARNING: Could not verify collection {collection_name}: {e}")
             
             # Search
             results = client.search(
@@ -108,7 +111,7 @@ class QdrantProvider(VectorStoreProvider):
                 if isinstance(file_name, str) and file_name.strip() == '':
                     file_name = 'Unknown'
                 
-                formatted_results.append({
+                formatted_result = {
                     'chunk_id': payload.get('chunk_id', ''),
                     'document_id': payload.get('document_id', ''),
                     'file_name': file_name,
@@ -117,7 +120,16 @@ class QdrantProvider(VectorStoreProvider):
                     'line_end': int(payload.get('line_end', 0)) if payload.get('line_end') else 0,
                     'metadata': payload.get('metadata', {}),
                     'score': score
-                })
+                }
+                formatted_results.append(formatted_result)
+            
+            # Log field extraction details
+            if formatted_results:
+                print(f"[QdrantProvider] Returned {len(formatted_results)} results")
+                sample = formatted_results[0]
+                print(f"[QdrantProvider] Sample result - file_name: '{sample.get('file_name')}', "
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}, "
+                      f"content_length: {len(sample.get('content', ''))}, score: {sample.get('score')}")
             
             return formatted_results
         except Exception as e:
@@ -137,6 +149,10 @@ class QdrantProvider(VectorStoreProvider):
     ) -> int:
         """Store chunks in Qdrant."""
         try:
+            if not chunks:
+                print(f"[QdrantProvider] No chunks to store")
+                return 0
+            
             client = self._get_client()
             
             if not collection_name:
@@ -182,9 +198,13 @@ class QdrantProvider(VectorStoreProvider):
             # Upsert points
             client.upsert(collection_name=collection_name, points=points)
             
+            print(f"[QdrantProvider] Stored {len(points)} chunks in Qdrant")
             return len(points)
         except Exception as e:
-            print(f"Error storing chunks in Qdrant: {e}")
+            error_msg = f"Error storing chunks in Qdrant: {str(e)}"
+            print(f"[QdrantProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return 0
     
     def _ensure_collection(self, client: QdrantClient, collection_name: str, vector_size: int = 384):

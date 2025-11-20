@@ -3,18 +3,17 @@
  */
 
 import { useState, useEffect } from 'react';
-import FileUpload from './components/FileUpload';
 import QueryInput from './components/QueryInput';
 import ResponseDisplay from './components/ResponseDisplay';
 import CollectionSelector from './components/CollectionSelector';
 import StatusProgressBar from './components/StatusProgressBar';
+import { IngestionPipelinePanel } from './components/IngestionPipelinePanel';
 import { apiService } from './api';
-import type { QueryResponse, UploadResponse, HealthStatus, UploadedFile } from './types';
+import type { QueryResponse, HealthStatus } from './types';
 
 function App() {
   const [response, setResponse] = useState<QueryResponse | null>(null);
   const [isQueryLoading, setIsQueryLoading] = useState(false);
-  const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [selectedCollections, setSelectedCollections] = useState<Set<string>>(new Set());
   const [suggestedQuestions, setSuggestedQuestions] = useState<string[]>([]);
@@ -54,27 +53,6 @@ function App() {
     }
   };
 
-  const handleUploadSuccess = (uploadResponse: UploadResponse) => {
-    const newFile: UploadedFile = {
-      document_id: uploadResponse.document_id,
-      file_name: uploadResponse.file_name,
-      total_chunks: uploadResponse.total_chunks,
-      stored_chunks: uploadResponse.stored_chunks,
-      selectedForIndex: true,  // Auto-select newly uploaded files
-      upload_date: new Date().toISOString()
-    };
-    setUploadedFiles(prev => [...prev, newFile]);
-  };
-
-  const handleFileSelectionToggle = (documentId: string) => {
-    setUploadedFiles(prev => 
-      prev.map(file => 
-        file.document_id === documentId 
-          ? { ...file, selectedForIndex: !file.selectedForIndex }
-          : file
-      )
-    );
-  };
 
   const fetchSuggestedQuestions = async (collectionName: string) => {
     try {
@@ -108,7 +86,31 @@ function App() {
         : undefined;
       // Use connection_id if available, otherwise fall back to mongodbUri
       const connectionIds = connectionId ? [connectionId] : undefined;
-      const queryResponse = await apiService.query(query, 5, collectionNames, connectionIds, mongodbUri);
+      
+      // Use the first selected collection as vector_collection for pipeline mode
+      // Format should be "database.collection" (e.g., "srugenai_db.movies")
+      // Filter out raw_documents and prefer vector collections
+      let vectorCollection: string | undefined = undefined;
+      if (selectedCollections.size > 0) {
+        const collections = Array.from(selectedCollections);
+        // Filter out raw_documents - they are not vector collections
+        const validCollections = collections.filter(c => !c.includes('raw_documents'));
+        
+        if (validCollections.length === 0) {
+          throw new Error('No valid vector collections selected. Please select a collection with vector embeddings (not raw_documents).');
+        }
+        
+        // Try to find srugenai_db collection first (excluding raw_documents)
+        const srugenaiCollection = validCollections.find(c => 
+          c.startsWith('srugenai_db.') && !c.includes('raw_documents')
+        );
+        vectorCollection = srugenaiCollection || validCollections[0];
+        console.log('[App] Selected vector collection for query:', vectorCollection);
+        console.log('[App] All selected collections:', collections);
+        console.log('[App] Valid vector collections:', validCollections);
+      }
+      
+      const queryResponse = await apiService.query(query, 5, collectionNames, connectionIds, mongodbUri, vectorCollection);
       setResponse(queryResponse);
       setQueryStatus('complete');
       
@@ -137,7 +139,8 @@ function App() {
       {/* Header */}
       <header className="bg-white shadow-sm" style={{ borderBottom: '1px solid var(--color-border-muted)' }}>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-center gap-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
             <svg
               className="h-10 w-10"
               style={{ color: 'var(--color-accent-green)' }}
@@ -166,6 +169,8 @@ function App() {
                 </span>
               </div>
             )}
+            </div>
+            
           </div>
         </div>
       </header>
@@ -173,8 +178,9 @@ function App() {
       {/* Status Progress Bar */}
       <StatusProgressBar status={queryStatus} />
 
-      {/* Main Content - 3 Column Layout */}
-      <main className="flex h-[calc(100vh-80px)] overflow-hidden">
+      {/* Main Content */}
+      <main className="h-[calc(100vh-80px)] overflow-hidden">
+        <div className="flex h-full overflow-hidden">
         {/* Left Column: Collections Sidebar */}
         <div className="w-64 flex-shrink-0 border-r" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
           <CollectionSelector
@@ -201,15 +207,12 @@ function App() {
           </div>
         </div>
 
-        {/* Right Column: Upload & Match Panel */}
+        {/* Right Column: Ingestion Pipeline Panel */}
         <div className="w-80 flex-shrink-0 border-l overflow-y-auto" style={{ borderColor: 'var(--color-border-muted)', backgroundColor: 'white' }}>
-          <div className="p-6 space-y-6">
-            <FileUpload 
-              onUploadSuccess={handleUploadSuccess}
-              uploadedFiles={uploadedFiles}
-              onFileSelectionToggle={handleFileSelectionToggle}
-              connectionId={connectionId}
+          <div className="p-6">
+            <IngestionPipelinePanel 
               mongodbUri={mongodbUri}
+              connectionId={connectionId}
             />
             
             {/* Source References Section */}
@@ -244,6 +247,7 @@ function App() {
               </div>
             )}
           </div>
+        </div>
         </div>
       </main>
     </div>
