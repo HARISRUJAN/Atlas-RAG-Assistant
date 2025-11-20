@@ -48,7 +48,8 @@ class PineconeProvider(VectorStoreProvider):
             client = self._get_client()
             client.list_indexes()
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[PineconeProvider] Connection test failed: {e}")
             return False
     
     def list_collections(self) -> List[str]:
@@ -58,7 +59,9 @@ class PineconeProvider(VectorStoreProvider):
             indexes = client.list_indexes()
             return [idx.name for idx in indexes.indexes]
         except Exception as e:
-            print(f"Error listing Pinecone indexes: {e}")
+            print(f"[PineconeProvider] Error listing Pinecone indexes: {e}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def vector_search(
@@ -94,7 +97,7 @@ class PineconeProvider(VectorStoreProvider):
                 if isinstance(file_name, str) and file_name.strip() == '':
                     file_name = 'Unknown'
                 
-                formatted_results.append({
+                formatted_result = {
                     'chunk_id': metadata.get('chunk_id', ''),
                     'document_id': metadata.get('document_id', ''),
                     'file_name': file_name,
@@ -103,11 +106,23 @@ class PineconeProvider(VectorStoreProvider):
                     'line_end': metadata.get('line_end', 0) or 0,
                     'metadata': metadata.get('metadata', {}),
                     'score': match.score or 0.0
-                })
+                }
+                formatted_results.append(formatted_result)
+            
+            # Log field extraction details
+            if formatted_results:
+                print(f"[PineconeProvider] Returned {len(formatted_results)} results")
+                sample = formatted_results[0]
+                print(f"[PineconeProvider] Sample result - file_name: '{sample.get('file_name')}', "
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}, "
+                      f"content_length: {len(sample.get('content', ''))}, score: {sample.get('score')}")
             
             return formatted_results
         except Exception as e:
-            print(f"Error in Pinecone vector search: {e}")
+            error_msg = f"Error in Pinecone vector search: {str(e)}"
+            print(f"[PineconeProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return []
     
     def store_chunks(
@@ -118,6 +133,10 @@ class PineconeProvider(VectorStoreProvider):
     ) -> int:
         """Store chunks in Pinecone."""
         try:
+            if not chunks:
+                print(f"[PineconeProvider] No chunks to store")
+                return 0
+            
             client = self._get_client()
             index_name = collection_name or self.index_name
             namespace = kwargs.get('namespace', '')
@@ -152,9 +171,13 @@ class PineconeProvider(VectorStoreProvider):
                 index.upsert(vectors=batch, namespace=namespace)
                 stored += len(batch)
             
+            print(f"[PineconeProvider] Stored {stored} chunks in Pinecone")
             return stored
         except Exception as e:
-            print(f"Error storing chunks in Pinecone: {e}")
+            error_msg = f"Error storing chunks in Pinecone: {str(e)}"
+            print(f"[PineconeProvider] ERROR: {error_msg}")
+            import traceback
+            traceback.print_exc()
             return 0
     
     def close(self):

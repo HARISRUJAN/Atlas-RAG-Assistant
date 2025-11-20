@@ -91,10 +91,27 @@ def list_collections():
             # Fall back to MongoDB URI header or config (backward compatibility)
             mongodb_uri = get_mongodb_uri()
             if not mongodb_uri:
-                return jsonify({'error': 'MongoDB URI not configured'}), 500
+                return jsonify({
+                    'error': 'MongoDB URI not configured',
+                    'details': 'Please provide X-MongoDB-URI header or configure MONGODB_URI in environment variables.'
+                }), 400
         
         # Create MongoDB client
-        client = create_mongodb_client_from_uri(mongodb_uri)
+        try:
+            client = create_mongodb_client_from_uri(mongodb_uri)
+        except Exception as client_error:
+            error_msg = str(client_error)
+            if 'SSL' in error_msg or 'TLS' in error_msg:
+                error_msg += (
+                    "\n\nSSL/TLS Troubleshooting:\n"
+                    "1. Verify your MONGODB_URI uses 'mongodb+srv://' format\n"
+                    "2. Check MongoDB Atlas IP whitelist includes your current IP\n"
+                    "3. Ensure your network allows SSL/TLS connections"
+                )
+            return jsonify({
+                'error': f'Failed to connect to MongoDB: {error_msg}',
+                'details': 'Please check your MongoDB URI and ensure the server is accessible.'
+            }), 500
         
         # Get all database names
         database_names = client.list_database_names()

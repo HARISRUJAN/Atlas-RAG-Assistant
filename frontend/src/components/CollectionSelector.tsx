@@ -134,7 +134,9 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
 
   const loadDefaultUri = async () => {
     try {
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}/config/mongodb-uri`);
+      // Use relative URL to leverage Vite proxy
+      const apiBase = import.meta.env.VITE_API_URL || '/api';
+      const response = await fetch(`${apiBase}/config/mongodb-uri`);
       if (response.ok) {
         const data = await response.json();
         if (data.default_uri) {
@@ -195,7 +197,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
       let errorMessage = 'Connection failed';
       
       if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
-        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+        const backendUrl = import.meta.env.VITE_API_URL || '/api';
         const baseUrl = backendUrl.replace('/api', '');
         errorMessage = `Cannot connect to backend server. Please ensure the backend is running on ${baseUrl}`;
       } else if (err.response?.data?.error) {
@@ -231,10 +233,16 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
         setExpandedDatabases(new Set([databasesList[0].name]));
       }
       
-      // Auto-select first collection if none selected
-      if (selectedCollections.size === 0 && databasesList.length > 0 && databasesList[0].collections.length > 0) {
-        const firstCollection = `${databasesList[0].name}.${databasesList[0].collections[0]}`;
-        onCollectionsChange(new Set([firstCollection]));
+      // Auto-select first queryable collection if none selected (exclude raw_documents)
+      if (selectedCollections.size === 0 && databasesList.length > 0) {
+        const firstQueryableCollection = databasesList
+          .flatMap(db => db.collections
+            .filter(coll => !coll.includes('raw_documents'))
+            .map(coll => `${db.name}.${coll}`)
+          )[0];
+        if (firstQueryableCollection) {
+          onCollectionsChange(new Set([firstQueryableCollection]));
+        }
       }
     } catch (err: any) {
       setConnectionStatus('disconnected');
@@ -243,7 +251,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
       let errorMessage = 'Failed to load databases';
       
       if (err.code === 'ERR_NETWORK' || err.message === 'Network Error' || !err.response) {
-        const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+        const backendUrl = import.meta.env.VITE_API_URL || '/api';
         const baseUrl = backendUrl.replace('/api', '');
         errorMessage = `Cannot connect to backend server. Please ensure the backend is running on ${baseUrl}`;
       } else if (err.response?.data?.error) {
@@ -292,7 +300,10 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     const database = databases.find(db => db.name === dbName);
     if (!database) return;
 
-    const dbCollections = database.collections.map(coll => `${dbName}.${coll}`);
+    // Filter out raw_documents when toggling database
+    const dbCollections = database.collections
+      .filter(coll => !coll.includes('raw_documents'))
+      .map(coll => `${dbName}.${coll}`);
     const allSelected = dbCollections.every(path => selectedCollections.has(path));
     
     const newSelections = new Set(selectedCollections);
@@ -310,7 +321,10 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     const database = databases.find(db => db.name === dbName);
     if (!database) return 'none';
 
-    const dbCollections = database.collections.map(coll => `${dbName}.${coll}`);
+    // Filter out raw_documents when checking selection state
+    const dbCollections = database.collections
+      .filter(coll => !coll.includes('raw_documents'))
+      .map(coll => `${dbName}.${coll}`);
     const selectedCount = dbCollections.filter(path => selectedCollections.has(path)).length;
     
     if (selectedCount === 0) return 'none';
@@ -447,7 +461,9 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
           <div className="space-y-1">
             {databases.map((database) => {
               const isExpanded = expandedDatabases.has(database.name);
-              const totalCollections = database.collections.length;
+              // Filter out raw_documents collections - they are not queryable vector collections
+              const queryableCollections = database.collections.filter(coll => !coll.includes('raw_documents'));
+              const totalCollections = queryableCollections.length;
               
               return (
                 <div key={database.name} className="border rounded-lg" style={{ borderColor: 'var(--color-border-muted)' }}>
@@ -500,7 +516,7 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                   {/* Collections List */}
                   {isExpanded && (
                     <div className="border-t pl-4 pr-2 py-1" style={{ borderColor: 'var(--color-border-muted)' }}>
-                      {database.collections.map((collection) => {
+                      {queryableCollections.map((collection) => {
                         const fullPath = `${database.name}.${collection}`;
                         const isSelected = selectedCollections.has(fullPath);
                         

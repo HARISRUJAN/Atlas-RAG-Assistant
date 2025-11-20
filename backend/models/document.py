@@ -41,10 +41,12 @@ class DocumentChunk:
     line_end: int
     embedding: Optional[List[float]] = None
     metadata: Optional[dict] = None
+    origin_id: Optional[str] = None  # Reference to origin document ID
+    raw_document_id: Optional[str] = None  # Reference to raw_document_id in raw_documents collection
     
     def to_dict(self):
         """Convert to dictionary for MongoDB storage."""
-        return {
+        result = {
             'chunk_id': self.chunk_id,
             'document_id': self.document_id,
             'file_name': self.file_name,
@@ -55,4 +57,10 @@ class DocumentChunk:
             'embedding': self.embedding,
             'metadata': self.metadata or {}
         }
+        # Add origin references if available
+        if self.origin_id:
+            result['origin_id'] = self.origin_id
+        if self.raw_document_id:
+            result['raw_document_id'] = self.raw_document_id
+        return result
 

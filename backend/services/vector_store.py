@@ -31,6 +31,10 @@ class VectorStoreService:
         # Use provided URI or fallback to config
         uri_to_use = mongodb_uri or Config.MONGODB_URI
         
+        # Validate MongoDB URI is provided
+        if not uri_to_use:
+            raise ValueError("MongoDB URI is required. Please provide mongodb_uri parameter or configure MONGODB_URI in environment variables.")
+        
         # Configure MongoDB client with SSL/TLS support for Atlas
         # For mongodb+srv:// connections, TLS is automatically enabled
         connection_params = {
@@ -40,7 +44,7 @@ class VectorStoreService:
         }
         
         # Check if connection string uses mongodb+srv://
-        if uri_to_use and uri_to_use.startswith('mongodb+srv://'):
+        if uri_to_use.startswith('mongodb+srv://'):
             # For mongodb+srv://, TLS is automatic, but we can add retryWrites if not present
             if 'retryWrites' not in uri_to_use:
                 separator = '&' if '?' in uri_to_use else '?'
@@ -183,12 +187,13 @@ class VectorStoreService:
         """
         Fallback text-based search when vector search fails.
         Returns random documents from the collection as a basic fallback.
+        Validates that documents have required fields before returning.
         
         Args:
             top_k: Number of results to return
             
         Returns:
-            List of documents with placeholder scores
+            List of documents with placeholder scores, validated for required fields
         """
         try:
             print(f"[VectorStore] Executing fallback text search for {top_k} results")
@@ -196,7 +201,7 @@ class VectorStoreService:
             # Get random documents from collection
             # Using sample aggregation for random selection
             pipeline = [
-                {"$sample": {"size": top_k}},
+                {"$sample": {"size": top_k * 2}},  # Get more to filter out invalid ones
                 {
                     "$project": {
                         "_id": 0,
@@ -231,22 +236,59 @@ class VectorStoreService:
                         "line_end": 1,
                         "metadata": 1
                     }
-                ).limit(top_k))
+                ).limit(top_k * 2))  # Get more to filter
                 
                 # Add placeholder scores
                 for result in results:
                     result["score"] = 0.5
             
-            print(f"[VectorStore] Fallback search returned {len(results)} results")
+            # Validate results have required fields before returning
+            validated_results = []
+            required_fields = ['content']  # At minimum, content must exist
+            for result in results:
+                # Check if result has content (required field)
+                has_content = result.get('content') and (
+                    not isinstance(result.get('content'), str) or 
+                    result.get('content', '').strip() != ''
+                )
+                
+                if has_content:
+                    # Ensure all fields have defaults
+                    validated_result = {
+                        'chunk_id': result.get('chunk_id', ''),
+                        'document_id': result.get('document_id', ''),
+                        'file_name': result.get('file_name') or 'Unknown',
+                        'content': result.get('content', ''),
+                        'line_start': result.get('line_start') or 0,
+                        'line_end': result.get('line_end') or 0,
+                        'metadata': result.get('metadata') or {},
+                        'score': result.get('score', 0.5)
+                    }
+                    
+                    # Handle empty string file_name
+                    if isinstance(validated_result['file_name'], str) and validated_result['file_name'].strip() == '':
+                        validated_result['file_name'] = 'Unknown'
+                    
+                    validated_results.append(validated_result)
+                    
+                    if len(validated_results) >= top_k:
+                        break
+                else:
+                    print(f"[VectorStore] Skipping result without content: chunk_id={result.get('chunk_id')}")
+            
+            print(f"[VectorStore] Fallback search returned {len(validated_results)} validated results (from {len(results)} raw results)")
             
             # Log sample result to verify fields
-            if results:
-                sample = results[0]
+            if validated_results:
+                sample = validated_results[0]
                 print(f"[VectorStore] Fallback sample fields: {list(sample.keys())}")
                 print(f"[VectorStore] Fallback sample file_name: '{sample.get('file_name')}', "
-                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}")
+                      f"line_start: {sample.get('line_start')}, line_end: {sample.get('line_end')}, "
+                      f"content_length: {len(sample.get('content', ''))}")
+            else:
+                print(f"[VectorStore] WARNING: No valid results found in fallback search (all results missing required fields)")
             
-            return results
+            return validated_results
             
         except Exception as e:
             print(f"[VectorStore] Fallback text search also failed: {str(e)}")

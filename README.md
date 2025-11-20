@@ -1,648 +1,395 @@
 # MongoDB Atlas RAG System
 
-A production-grade **Retrieval-Augmented Generation (RAG)** system demonstrating advanced LangChain integration with MongoDB Atlas Vector Search and Llama 3.2.
+A production-grade **Retrieval-Augmented Generation (RAG)** system with MongoDB Atlas Vector Search integration.
 
-![MongoDB RAG System Demo](demo.png)
-
-## 🎯 Project Overview
+## Project Overview
 
 This system implements a complete RAG pipeline that:
 - Processes and chunks documents with line number preservation
 - Generates embeddings using local sentence-transformers models
 - Stores vectors in MongoDB Atlas with semantic search capabilities
 - Retrieves contextually relevant chunks using vector similarity
-- Generates accurate, source-cited answers using Llama 3.2
-- **NEW**: Supports multiple MongoDB databases and collections
-- **NEW**: Dynamic question generation based on collection content
-- **NEW**: Hierarchical collection browser with tree view
-- **NEW**: Three-column UI layout for improved user experience
+- Generates accurate, source-cited answers using LLM APIs
+- Supports multiple MongoDB databases and collections
+- Dynamic question generation based on collection content
+- Hierarchical collection browser with tree view
 
-## 🏗️ System Architecture
+## Prerequisites
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Frontend Layer                        │
-│  React + TypeScript + Tailwind CSS                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
-│  │ Collections  │  │ Chat         │  │ Upload/      │      │
-│  │ Sidebar      │  │ Interface    │  │ Match Panel  │      │
-│  │ • Database   │  │ • Query      │  │ • File       │      │
-│  │   Tree View  │  │   Input      │  │   Upload     │      │
-│  │ • Collection │  │ • Dynamic    │  │ • Source     │      │
-│  │   Selection  │  │   Questions  │  │   Matches    │      │
-│  └──────────────┘  └──────────────┘  └──────────────┘      │
-└──────────────────────┬──────────────────────────────────────┘
-                        │ HTTP/REST API
-┌───────────────────────▼──────────────────────────────────────┐
-│                      Backend Layer                            │
-│  Flask + LangChain + MongoDB                                 │
-│                                                               │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │   Document   │  │  Embedding  │  │   Vector     │       │
-│  │  Processor   │──│   Service   │──│    Store     │       │
-│  └──────────────┘  └──────────────┘  └──────┬───────┘       │
-│                                              │                │
-│  ┌──────────────┐  ┌──────────────────────────────────────┐ │
-│  │ Collections  │  │           RAG Service (LangChain)     │ │
-│  │  Service     │  │  • Vector Retriever                  │ │
-│  │  • List DBs  │  │  • Context Assembly                  │ │
-│  │  • List      │  │  • LLM Chain (Llama 3.2)            │ │
-│  │    Collections│  │  • Response Formatting              │ │
-│  │  • Generate  │  │  • Multi-Collection Support          │ │
-│  │    Questions │  └──────────────────────────────────────┘ │
-│  └──────────────┘                                            │
-└───────────────────────┬──────────────────────────────────────┘
-                        │
-┌───────────────────────▼──────────────────────────────────────┐
-│                  MongoDB Atlas                                 │
-│  • Vector Search Index (384 dimensions)                       │
-│  • Cosine Similarity                                           │
-│  • Document Chunks with Metadata                               │
-└────────────────────────────────────────────────────────────────┘
-```
+- **Python 3.11+** (with pip)
+- **Node.js 18+** (with npm)
+- **MongoDB Atlas account** (free tier available)
+- **LLM API access** (Llama 3.2 or compatible OpenAI-compatible API)
 
-## 🔗 RAG Chain Implementation
+## Installation
 
-### Core RAG Pipeline
+### 1. Clone the Repository
 
-The RAG chain is implemented in `backend/services/rag_service.py` using LangChain's modular architecture:
-
-```python
-# 1. Document Processing & Chunking
-Document → Text Extraction → RecursiveCharacterTextSplitter → Chunks with Line Numbers
-
-# 2. Embedding Generation
-Chunks → SentenceTransformer (all-MiniLM-L6-v2) → 384-dimensional vectors
-
-# 3. Vector Storage
-Vectors + Metadata → MongoDB Atlas Vector Store → Indexed for Search
-
-# 4. Retrieval Phase
-User Query → Query Embedding → Vector Search → Top-K Relevant Chunks
-
-# 5. Generation Phase
-Retrieved Chunks + Query → Context Assembly → LLM Prompt → Generated Answer
-```
-
-### LangChain Components Used
-
-#### 1. **Document Loaders** (`langchain_community.document_loaders`)
-- **PyPDFLoader**: PDF text extraction
-- **TextLoader**: Plain text files
-- **Docx2txtLoader**: Microsoft Word documents
-- **UnstructuredMarkdownLoader**: Markdown files
-
-#### 2. **Text Splitters** (`langchain_text_splitters`)
-- **RecursiveCharacterTextSplitter**: Intelligent chunking with overlap
-  - Preserves document structure
-  - Maintains line number tracking for citations
-  - Configurable chunk size (1000) and overlap (200)
-
-#### 3. **Vector Stores** (`langchain_community.vectorstores`)
-- **MongoDBAtlasVectorSearch**: Native MongoDB integration
-  - Custom embedding function wrapper
-  - Vector search query construction
-  - Metadata filtering capabilities
-
-#### 4. **Retrievers** (`langchain.retrievers`)
-- **VectorStoreRetriever**: Semantic similarity retrieval
-  - Top-K retrieval (configurable)
-  - Score-based ranking
-  - Metadata preservation
-
-#### 5. **LLM Integration** (`langchain.llms`)
-- **Custom LLM Wrapper**: Llama 3.2 API integration
-  - OpenAI-compatible endpoint support
-  - Streaming capability
-  - Token management
-
-#### 6. **Chains** (`langchain.chains`)
-- **RetrievalQA Chain**: End-to-end RAG pipeline
-  - Automatic context injection
-  - Prompt template management
-  - Source attribution
-
-### RAG Service Architecture
-
-```python
-class RAGService:
-    """
-    Orchestrates the complete RAG pipeline using LangChain components.
-    """
-    
-    def __init__(self):
-        # Initialize embedding service
-        self.embedding_service = EmbeddingService()
-        
-        # Initialize vector store with MongoDB
-        self.vector_store = MongoDBAtlasVectorSearch(
-            embedding_function=self.embedding_service,
-            collection=collection,
-            index_name=index_name
-        )
-        
-        # Create retriever
-        self.retriever = self.vector_store.as_retriever(
-            search_kwargs={"k": 5}  # Top 5 most relevant chunks
-        )
-        
-        # Initialize LLM
-        self.llm = CustomLlamaLLM(
-            api_url=LLM_API_URL,
-            api_key=LLM_API_KEY,
-            model=LLM_MODEL
-        )
-        
-        # Create RAG chain #############################################################################################
-        self.qa_chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=self.retriever,
-            return_source_documents=True
-        )
-    
-    def query(self, question: str) -> QueryResponse:
-        """
-        Execute RAG pipeline:
-        1. Retrieve relevant chunks
-        2. Assemble context
-        3. Generate answer with LLM
-        4. Format response with sources
-        """
-        result = self.qa_chain.invoke({"query": question})
-        
-        return {
-            "answer": result["result"],
-            "sources": self._format_sources(result["source_documents"]),
-            "query": question
-        }
-```
-
-## 📊 Data Flow
-
-### Document Ingestion Flow
-
-```
-1. File Upload (PDF/TXT/DOCX/MD)
-   ↓
-2. Document Processor
-   ├─→ Extract text content
-   ├─→ Validate file type & size
-   └─→ Return raw text
-   ↓
-3. Text Chunking (RecursiveCharacterTextSplitter)
-   ├─→ Split into 1000-char chunks
-   ├─→ 200-char overlap between chunks
-   ├─→ Preserve line numbers (start, end)
-   └─→ Return: [(chunk_text, line_start, line_end), ...]
-   ↓
-4. Embedding Generation (SentenceTransformer)
-   ├─→ Model: all-MiniLM-L6-v2
-   ├─→ Dimension: 384
-   ├─→ Batch processing for efficiency
-   └─→ Return: List[List[float]] (384-dim vectors)
-   ↓
-5. MongoDB Vector Store
-   ├─→ Store chunks with embeddings
-   ├─→ Metadata: file_name, line_start, line_end, content
-   ├─→ Indexed for vector search
-   └─→ Ready for retrieval
-```
-
-### Query Processing Flow
-
-```
-1. User Query Input
-   ↓
-2. Query Embedding
-   ├─→ Generate 384-dim vector for query
-   └─→ Same model as document embeddings
-   ↓
-3. Vector Search (MongoDB Atlas)
-   ├─→ Cosine similarity search
-   ├─→ Top-K retrieval (default: 5)
-   ├─→ Score-based ranking
-   └─→ Return: [(chunk, score, metadata), ...]
-   ↓
-4. Context Assembly
-   ├─→ Combine top-K chunks
-   ├─→ Add source metadata
-   └─→ Format for LLM prompt
-   ↓
-5. LLM Generation (Llama 3.2)
-   ├─→ Prompt: Query + Context + Instructions
-   ├─→ Generate answer
-   └─→ Return: Generated text
-   ↓
-6. Response Formatting
-   ├─→ Combine answer + sources
-   ├─→ Include file names & line numbers
-   ├─→ Add relevance scores
-   └─→ Return: QueryResponse
-```
-
-## 🔧 Technical Implementation Details
-
-### Vector Search Configuration
-
-**MongoDB Atlas Vector Search Index:**
-```json
-{
-  "mappings": {
-    "dynamic": true,
-    "fields": {
-      "embedding": {
-        "type": "knnVector",
-        "dimensions": 384,
-        "similarity": "cosine"
-      }
-    }
-  }
-}
-```
-
-**Search Pipeline:**
-```python
-pipeline = [
-    {
-        "$vectorSearch": {
-            "index": "vector_index",
-            "path": "embedding",
-            "queryVector": query_embedding,
-            "numCandidates": 10,
-            "limit": 5
-        }
-    },
-    {
-        "$project": {
-            "file_name": 1,
-            "content": 1,
-            "line_start": 1,
-            "line_end": 1,
-            "score": {"$meta": "vectorSearchScore"}
-        }
-    }
-]
-```
-
-### Chunking Strategy
-
-- **Method**: RecursiveCharacterTextSplitter
-- **Chunk Size**: 1000 characters
-- **Overlap**: 200 characters
-- **Separators**: `["\n\n", "\n", ". ", " ", ""]`
-- **Line Tracking**: Custom implementation to preserve line numbers
-
-### Embedding Model
-
-- **Model**: `all-MiniLM-L6-v2` (sentence-transformers)
-- **Dimensions**: 384
-- **Similarity**: Cosine
-- **Advantages**: 
-  - Fast inference
-  - Good semantic understanding
-  - No API costs
-  - Privacy-preserving (local)
-
-### LLM Integration
-
-- **Model**: Llama 3.2
-- **API Format**: OpenAI-compatible
-- **Prompt Template**:
-  ```
-  Context: {retrieved_chunks}
-  
-  Question: {user_query}
-  
-  Instructions:
-  - Answer based only on the provided context
-  - Cite sources with file names and line numbers
-  - If context is insufficient, state so clearly
-  ```
-
-## 📁 Project Structure
-
-```
-mongo_rag/
-├── backend/
-│   ├── app.py                      # Flask application entry point
-│   ├── config.py                   # Environment configuration
-│   ├── models/                     # Data models
-│   │   ├── document.py            # Document data structure
-│   │   └── query.py                # Query request/response models
-│   ├── services/                   # Core business logic
-│   │   ├── document_processor.py  # Document loading & extraction
-│   │   ├── embedding_service.py   # Embedding generation (sentence-transformers)
-│   │   ├── vector_store.py        # MongoDB vector operations (multi-collection support)
-│   │   └── rag_service.py         # RAG pipeline orchestration (LangChain)
-│   ├── routes/                     # API endpoints
-│   │   ├── upload.py               # File upload handler
-│   │   ├── query.py               # Query processing endpoint
-│   │   ├── collections.py         # Collections & questions endpoints (NEW)
-│   │   └── health.py               # Health check endpoint
-│   └── utils/                      # Utility functions
-│       ├── file_validator.py       # File validation
-│       ├── chunking.py             # Text chunking with line tracking
-│       └── mongodb_client.py      # MongoDB connection utilities (NEW)
-├── frontend/
-│   ├── src/
-│   │   ├── components/             # React components
-│   │   │   ├── FileUpload.tsx     # Document upload UI
-│   │   │   ├── QueryInput.tsx      # Query input with dynamic suggestions
-│   │   │   ├── ResponseDisplay.tsx # Answer display
-│   │   │   ├── CollectionSelector.tsx # Database/collection tree view (NEW)
-│   │   │   └── SourceReference.tsx # Source citation component
-│   │   ├── api.ts                  # API client (enhanced with collections API)
-│   │   ├── types.ts                # TypeScript definitions (extended)
-│   │   └── App.tsx                 # Main application component (3-column layout)
-│   └── package.json               # Frontend dependencies
-├── start_project.py                # Project startup script (NEW)
-├── requirements.txt                # Python dependencies
-└── README.md                       # This file
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- MongoDB Atlas account
-- Llama 3.2 API access
-
-### Installation
-
-1. **Clone the repository**
 ```bash
-git clone https://github.com/HARISRUJAN/Atlas-RAG-Assistant.git
-cd Atlas-RAG-Assistant
+git clone <repository-url>
+cd mongo_rag
 ```
 
-2. **Backend Setup**
+### 2. Backend Setup
+
+Create and activate a virtual environment:
+
+**Windows:**
 ```bash
-# Create virtual environment
 python -m venv rag_env
-rag_env\Scripts\activate  # Windows
-source rag_env/bin/activate  # macOS/Linux
+rag_env\Scripts\activate
+```
 
-# Install dependencies
+**macOS/Linux:**
+```bash
+python -m venv rag_env
+source rag_env/bin/activate
+```
+
+Install Python dependencies:
+```bash
 pip install -r requirements.txt
 ```
 
-3. **Frontend Setup**
+### 3. Frontend Setup
+
 ```bash
 cd frontend
 npm install
+cd ..
 ```
 
-4. **Environment Configuration**
-Create `.env` file (⚠️ **NEVER commit this file to git**):
+## Configuration
+
+### Environment Variables
+
+Create a `.env` file in the project root directory (same level as `README.md`):
+
 ```env
 # MongoDB Atlas Connection String
 # Get this from MongoDB Atlas → Connect → Connect your application
 MONGODB_URI=mongodb+srv://<username>:<password>@<cluster-name>.<region>.mongodb.net/?retryWrites=true&w=majority
+
+# MongoDB Database Configuration
 MONGODB_DATABASE_NAME=rag_database
 MONGODB_COLLECTION_NAME=documents
 MONGODB_VECTOR_INDEX_NAME=vector_index
 
+# Two-Stage Pipeline Configuration (optional)
+RAW_DOCUMENTS_DATABASE_NAME=rag_database
+RAW_DOCUMENTS_COLLECTION_NAME=raw_documents
+VECTOR_DATA_DATABASE_NAME=rag_database
+VECTOR_DATA_COLLECTION_NAME=vector_data
+VECTOR_DATA_INDEX_NAME=vector_index
+
 # LLM API Configuration
-LLM_API_URL=https://your-llama-api.com/v1/completions
-LLM_API_KEY=your-api-key
+LLM_API_URL=https://your-llama-api.com/v1/chat/completions
+LLM_API_KEY=your-api-key-here
 LLM_MODEL=llama3.2:latest
 
 # Embedding Configuration
 EMBEDDING_MODEL=all-MiniLM-L6-v2
 CHUNK_SIZE=1000
 CHUNK_OVERLAP=200
+
+# File Upload Configuration
+MAX_FILE_SIZE_MB=10
+ALLOWED_EXTENSIONS=pdf,txt,docx,md
+
+# Flask Configuration
+FLASK_ENV=development
+FLASK_DEBUG=True
+FLASK_PORT=5000
 ```
 
-**⚠️ Security Note:** Replace `<username>`, `<password>`, and `<cluster-name>` with your actual MongoDB Atlas credentials. Never commit the `.env` file to version control.
+**Important:**
+- Replace `<username>`, `<password>`, and `<cluster-name>` with your actual MongoDB Atlas credentials
+- Never commit the `.env` file to version control (it's already in `.gitignore`)
+- The `.env` file should be in the project root directory
 
-5. **Create MongoDB Vector Search Index**
-- Go to MongoDB Atlas → Search → Create Index
-- Database: `rag_database`, Collection: `documents`
-- Use the JSON configuration shown in "Vector Search Configuration" above
+### Where to Enter Configuration
 
-6. **Run the Application**
+1. **Create `.env` file**: In the project root directory (same folder as `README.md`, `requirements.txt`, etc.)
+2. **Copy the template above** into your `.env` file
+3. **Replace placeholder values** with your actual credentials
 
-**Option 1: Using the startup script (Recommended)**
-```bash
-# From project root
-python start_project.py
-```
-This script will:
-- Activate the virtual environment
-- Start the Flask backend server
-- Start the frontend development server
-- Display connection information
+## MongoDB Atlas Vector Index Setup
 
-**Option 2: Manual startup**
-```bash
-# Backend (from project root)
-python -m backend.app
+Before running queries, you must create a vector search index in MongoDB Atlas:
 
-# Frontend (from frontend directory, in a new terminal)
-cd frontend
-npm run dev
-```
+### Step 1: Access MongoDB Atlas
 
-Access the application at `http://localhost:5173`
+1. Go to [MongoDB Atlas](https://cloud.mongodb.com)
+2. Log in to your account
+3. Navigate to your cluster
 
-## 🆕 New Features
+### Step 2: Create Vector Search Index
 
-### 1. Multi-Database & Collection Support
+1. Click on the **"Search"** tab (NOT "Collections" or "Indexes")
+2. Click **"Create Search Index"**
+3. Select **"JSON Editor"**
+4. Paste this configuration:
 
-The system now supports querying across multiple MongoDB databases and collections:
-
-- **Hierarchical View**: Browse all databases and their collections in a tree structure
-- **Dynamic Selection**: Select any collection from your MongoDB Atlas instance
-- **Flexible Querying**: Query specific collections without changing configuration
-- **Collection Browser**: Left sidebar displays all available databases and collections
-
-### 2. Dynamic Question Generation
-
-Instead of hardcoded suggested questions, the system now generates context-aware questions:
-
-- **Content-Based**: Questions are generated by analyzing actual documents in the selected collection
-- **LLM-Powered**: Uses the same LLM to create relevant questions based on collection content
-- **Automatic Updates**: Questions refresh when you select a different collection
-- **Smart Sampling**: Analyzes sample documents to understand collection content
-
-**API Endpoint**: `GET /api/collections/<database>/<collection>/questions`
-
-### 3. Enhanced UI Layout
-
-The interface has been redesigned with a three-column layout:
-
-```
-┌──────────────┬──────────────────────┬──────────────┐
-│              │                      │              │
-│ Collections  │    Chat Interface   │  Upload/     │
-│ Sidebar      │                      │  Match       │
-│              │  • Query Input       │  Panel       │
-│ • Database   │  • Dynamic Questions │              │
-│   Tree       │  • Response Display │  • File      │
-│ • Collection │  • Source Citations │    Upload    │
-│   Selection  │                      │  • Matched   │
-│              │                      │    Sources   │
-└──────────────┴──────────────────────┴──────────────┘
-```
-
-**Features:**
-- **Left Panel**: Scrollable collection browser with expandable database/collection tree
-- **Center Panel**: Full-height chat interface with query input and response display
-- **Right Panel**: File upload and source match display
-- **Responsive**: All panels are independently scrollable
-
-### 4. Collection Management API
-
-New backend endpoints for collection management:
-
-- `GET /api/collections` - List all databases with their collections
-- `GET /api/collections/<database>/<collection>/questions` - Generate dynamic questions for a collection
-
-**Response Format:**
 ```json
 {
-  "databases": [
+  "fields": [
     {
-      "name": "database_name",
-      "collections": ["collection1", "collection2"]
+      "type": "vector",
+      "path": "embedding",
+      "numDimensions": 384,
+      "similarity": "cosine"
+    },
+    {
+      "type": "filter",
+      "path": "document_id"
+    },
+    {
+      "type": "filter",
+      "path": "file_name"
     }
   ]
 }
 ```
 
-### 5. Enhanced Query API
+5. Set the following:
+   - **Index Name**: `vector_index` (or match your `VECTOR_DATA_INDEX_NAME` in `.env`)
+   - **Database Name**: Your database name (e.g., `rag_database`)
+   - **Collection Name**: Your collection name (e.g., `documents` or `vector_data`)
 
-The query endpoint now supports collection-specific queries:
+6. Click **"Create Search Index"**
+7. Wait 1-3 minutes for the index status to change from "Building" to "Active"
 
-**Request:**
-```json
-{
-  "query": "What are the key details?",
-  "collection_name": "database_name/collection_name"
-}
+**Note:** The index name must match the `VECTOR_DATA_INDEX_NAME` or `MONGODB_VECTOR_INDEX_NAME` value in your `.env` file.
+
+## Running the Application
+
+### Option 1: Using the Startup Script (Recommended)
+
+From the project root directory:
+
+```bash
+python start_project.py
 ```
 
-**Benefits:**
-- Query specific collections without reconfiguration
-- Support for multiple vector indexes
-- Isolated data queries per collection
+This will:
+- Start the Flask backend server on port 5000 (or port specified in `.env`)
+- Display connection information
+- Provide instructions to start the frontend in a separate terminal
 
-## 🎓 Key LangChain Concepts Demonstrated
+Then, in a **new terminal window**, start the frontend:
 
-1. **Document Processing Pipeline**
-   - Multi-format document loading
-   - Intelligent text splitting
-   - Metadata preservation
+```bash
+cd frontend
+npm run dev
+```
 
-2. **Vector Store Integration**
-   - Custom embedding function
-   - MongoDB Atlas native support
-   - Efficient similarity search
+### Option 2: Manual Startup
 
-3. **Retrieval Strategies**
-   - Top-K retrieval
-   - Score-based ranking
-   - Metadata filtering
+**Terminal 1 - Backend:**
+```bash
+# From project root, with virtual environment activated
+python -m flask --app backend.app run --port 5000
+```
 
-4. **Chain Composition**
-   - RetrievalQA chain
-   - Context injection
-   - Prompt templating
+Or using the app directly:
+```bash
+python -m backend.app
+```
 
-5. **LLM Abstraction**
-   - Custom LLM wrapper
-   - API compatibility layer
-   - Streaming support
+**Terminal 2 - Frontend:**
+```bash
+cd frontend
+npm run dev
+```
 
-## 📈 Performance Optimizations
+### Access the Application
 
-- **Batch Embedding**: Process multiple chunks simultaneously
-- **Vector Index**: MongoDB Atlas optimized for similarity search
-- **Chunk Overlap**: Prevents context loss at boundaries
-- **Line Number Tracking**: Enables precise source citations
-- **Top-K Retrieval**: Balances relevance and performance
+- **Frontend**: `http://localhost:5173` (or the port shown in the terminal)
+- **Backend API**: `http://localhost:5000/api`
+- **Health Check**: `http://localhost:5000/api/health`
 
-## 🔒 Security Considerations
+## File Structure
 
-- **Environment variables** for sensitive data (`.env` file is gitignored)
-- **Never commit** `.env` file or any files containing credentials
-- File type validation
-- Size limits (10MB max)
-- No API keys or connection strings in codebase
-- Local embedding generation (privacy-preserving)
-- **MongoDB Connection Security**: 
-  - SSL/TLS encryption for all connections
-  - IP whitelisting support in MongoDB Atlas
-  - Connection string validation
-  - Automatic retry logic with proper error handling
+```
+mongo_rag/
+├── backend/                      # Flask backend application
+│   ├── app.py                    # Main Flask application entry point
+│   ├── config.py                 # Configuration management (reads .env)
+│   ├── models/                   # Data models
+│   │   ├── document.py          # Document chunk model
+│   │   ├── query.py             # Query request/response models
+│   │   ├── raw_document.py      # Raw document model
+│   │   ├── connection.py        # Connection model
+│   │   └── origin_source.py     # Origin source model
+│   ├── routes/                   # API route handlers
+│   │   ├── query.py             # Query endpoint
+│   │   ├── upload.py            # File upload endpoint
+│   │   ├── collections.py       # Collections listing endpoint
+│   │   ├── ingestion.py         # Document ingestion endpoint
+│   │   ├── health.py            # Health check endpoint
+│   │   ├── config.py            # Configuration endpoint
+│   │   ├── connections.py       # Connection management
+│   │   └── origin.py            # Origin source management
+│   ├── services/                 # Business logic services
+│   │   ├── rag_service.py       # RAG pipeline orchestration
+│   │   ├── embedding_service.py # Embedding generation
+│   │   ├── vector_store.py      # Vector store operations
+│   │   ├── vector_data_store.py # Vector data collection operations
+│   │   ├── document_processor.py # Document processing
+│   │   ├── ingestion_pipeline.py # Ingestion pipeline
+│   │   ├── raw_document_store.py # Raw document storage
+│   │   ├── collection_service.py # Collection validation
+│   │   ├── unified_vector_store.py # Multi-provider support
+│   │   ├── realtime_ingestion.py # Real-time ingestion
+│   │   ├── providers/            # Vector store providers
+│   │   │   ├── mongodb.py        # MongoDB provider
+│   │   │   ├── redis.py          # Redis provider
+│   │   │   ├── pinecone.py       # Pinecone provider
+│   │   │   └── qdrant.py         # Qdrant provider
+│   │   └── origin_sources/       # Origin source handlers
+│   │       ├── mongodb_origin.py # MongoDB origin
+│   │       ├── filesystem_origin.py # Filesystem origin
+│   │       └── qdrant_origin.py  # Qdrant origin
+│   └── utils/                    # Utility functions
+│       ├── chunking.py           # Text chunking utilities
+│       ├── file_validator.py     # File validation
+│       ├── mongodb_client.py     # MongoDB connection utilities
+│       └── setup_pipeline_collections.py # Collection setup
+├── frontend/                     # React frontend application
+│   ├── src/
+│   │   ├── App.tsx               # Main application component
+│   │   ├── api.ts                # API client
+│   │   ├── types.ts              # TypeScript type definitions
+│   │   └── components/          # React components
+│   │       ├── QueryInput.tsx    # Query input component
+│   │       ├── ResponseDisplay.tsx # Response display
+│   │       ├── CollectionSelector.tsx # Collection selector
+│   │       ├── DatabaseCollectionSelector.tsx # Database/collection tree
+│   │       ├── IngestionPanel.tsx # Ingestion panel
+│   │       ├── IngestionPipelinePanel.tsx # Pipeline panel
+│   │       ├── RawDocumentList.tsx # Raw document list
+│   │       └── ...               # Other components
+│   ├── package.json              # Frontend dependencies
+│   └── vite.config.ts            # Vite configuration
+├── requirements.txt               # Python dependencies
+├── start_project.py              # Startup script
+├── docker-compose.yml            # Docker Compose configuration
+├── Dockerfile.backend            # Backend Docker image
+├── Dockerfile.frontend           # Frontend Docker image
+├── nginx.conf                    # Nginx configuration
+├── run.bat                       # Windows run script
+├── run.sh                        # Linux/Mac run script
+├── START_SYSTEM.bat              # Windows system start script
+└── README.md                     # This file
+```
 
-**⚠️ If you've accidentally committed credentials:**
-1. Rotate/change your MongoDB Atlas password immediately
-2. Revoke the old database user in MongoDB Atlas
-3. Check security logs for unauthorized access
-4. Remove credentials from git history (use `git filter-branch` or BFG Repo-Cleaner)
+## Usage Guide
 
-## 🛠️ Tech Stack
+### 1. Upload Documents
 
-| Component | Technology |
-|-----------|-----------|
-| **Backend Framework** | Flask (Python) |
-| **RAG Framework** | LangChain |
-| **Vector Database** | MongoDB Atlas Vector Search |
-| **Embeddings** | sentence-transformers (all-MiniLM-L6-v2) |
-| **LLM** | Llama 3.2 |
-| **Frontend** | React + TypeScript + Vite |
-| **Styling** | Tailwind CSS |
-| **Document Processing** | PyPDF2, python-docx, markdown |
+- Use the file upload panel in the right sidebar
+- Supported formats: PDF, TXT, DOCX, MD
+- Maximum file size: 10MB (configurable in `.env`)
 
-## 🐛 Troubleshooting
+### 2. Process Documents
+
+- Documents are automatically processed and chunked
+- Embeddings are generated and stored in MongoDB
+- Processed documents appear in the ingestion pipeline
+
+### 3. Query Documents
+
+- Select a collection from the left sidebar
+- Enter your question in the query input
+- View the answer with source citations
+- Suggested questions are generated based on collection content
+
+### 4. Browse Collections
+
+- Left sidebar shows all databases and collections
+- Expand/collapse databases to view collections
+- Select a collection to query its documents
+
+## Troubleshooting
 
 ### MongoDB Connection Issues
 
-If you encounter SSL/TLS connection errors:
+**Error: "Failed to connect to MongoDB"**
 
-1. **Check IP Whitelist**: 
+1. **Check IP Whitelist:**
    - Go to MongoDB Atlas → Network Access
    - Add your current IP address or `0.0.0.0/0` (for testing only)
    - Wait 1-2 minutes for changes to propagate
 
-2. **Verify Connection String**:
+2. **Verify Connection String:**
    - Ensure format: `mongodb+srv://user:pass@cluster.mongodb.net/?retryWrites=true&w=majority`
    - Check username and password are correct
    - Verify cluster name matches your Atlas cluster
+   - Ensure password is URL-encoded if it contains special characters
 
-3. **Test Connection**:
-   ```bash
-   python test_mongodb_connection.py
-   ```
-   This diagnostic script will help identify connection issues.
-
-4. **Update Dependencies**:
+3. **Update Dependencies:**
    ```bash
    pip install --upgrade pymongo
    ```
 
-### Blank Screen Issues
+### Vector Search Not Working
 
-If the frontend shows a blank screen:
+**Error: "Collection does not have a vector index"**
+
+1. Verify the vector search index exists in MongoDB Atlas
+2. Check index name matches `VECTOR_DATA_INDEX_NAME` in `.env`
+3. Ensure index status is "Active" (not "Building")
+4. Verify index configuration includes `embedding` field with 384 dimensions
+
+### Frontend Not Loading
+
+**Blank screen or connection errors:**
 
 1. Check browser console (F12) for JavaScript errors
 2. Verify frontend dev server is running: `npm run dev`
 3. Check backend API is accessible: `http://localhost:5000/api/health`
-4. Hard refresh the page (Ctrl+Shift+R)
+4. Hard refresh the page (Ctrl+Shift+R or Cmd+Shift+R)
+5. Verify CORS settings in `backend/app.py` include your frontend port
 
-### Collection Not Found
+### Backend Not Starting
 
-If collections don't appear:
+**Error: "ModuleNotFoundError" or import errors:**
 
-1. Verify MongoDB connection is working
-2. Check that collections exist in your MongoDB Atlas instance
-3. Ensure the database user has read permissions
-4. Check browser console for API errors
+1. Ensure virtual environment is activated
+2. Install dependencies: `pip install -r requirements.txt`
+3. Verify Python version: `python --version` (should be 3.11+)
+4. Check `.env` file exists and is in the project root
 
-## 📝 License
+### No Results from Queries
+
+**Query returns "No results found":**
+
+1. Verify documents have been uploaded and processed
+2. Check collection has documents with embeddings
+3. Ensure vector search index is created and active
+4. Verify index name in `.env` matches the index in MongoDB Atlas
+5. Check embedding dimensions match (should be 384 for all-MiniLM-L6-v2)
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|-----------|
+| **Backend Framework** | Flask (Python) |
+| **Vector Database** | MongoDB Atlas Vector Search |
+| **Embeddings** | sentence-transformers (all-MiniLM-L6-v2) |
+| **LLM** | Llama 3.2 (or compatible API) |
+| **Frontend** | React + TypeScript + Vite |
+| **Styling** | Tailwind CSS |
+| **Document Processing** | PyPDF2, python-docx, markdown |
+
+## Security Notes
+
+- **Never commit `.env` file** to version control
+- Use environment variables for all sensitive data
+- MongoDB connection strings should use SSL/TLS
+- File uploads are validated for type and size
+- API keys should be kept secure and rotated regularly
+
+## License
 
 MIT

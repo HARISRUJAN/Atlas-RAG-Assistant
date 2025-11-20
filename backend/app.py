@@ -5,6 +5,8 @@ from flask_cors import CORS
 
 from backend.config import Config
 from backend.routes import upload_bp, query_bp, health_bp, collections_bp, config_bp, connections_bp
+from backend.routes.ingestion import ingestion_bp
+from backend.routes.origin import origin_bp
 
 
 def create_app():
@@ -16,9 +18,11 @@ def create_app():
         r"/api/*": {
             "origins": [
                 "http://localhost:5173", 
-                "http://localhost:5174", 
+                "http://localhost:5174",
+                "http://localhost:5175",
                 "http://127.0.0.1:5173",
                 "http://127.0.0.1:5174",
+                "http://127.0.0.1:5175",
                 "http://localhost:3000"
             ],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -27,13 +31,14 @@ def create_app():
         }
     })
     
-    # Validate configuration
+    # Validate configuration (warn but don't exit)
     try:
         Config.validate()
     except ValueError as e:
-        print(f"Configuration error: {e}")
-        print("Please check your .env file")
-        exit(1)
+        print(f"[App] Configuration warning: {e}")
+        print("[App] The app will start but some features may not work until configuration is complete.")
+        print("[App] Please check your .env file")
+        # Don't exit - let the app start so user can configure via UI
     
     # Register blueprints
     app.register_blueprint(upload_bp, url_prefix='/api')
@@ -42,6 +47,24 @@ def create_app():
     app.register_blueprint(collections_bp, url_prefix='/api')
     app.register_blueprint(config_bp, url_prefix='/api')
     app.register_blueprint(connections_bp, url_prefix='/api')
+    app.register_blueprint(ingestion_bp, url_prefix='/api')
+    app.register_blueprint(origin_bp, url_prefix='/api')
+    
+    # Initialize real-time ingestion service (optional, can be enabled via config)
+    # Uncomment and configure if you want real-time ingestion on startup
+    # try:
+    #     from backend.services.realtime_ingestion import initialize_realtime_service
+    #     if Config.ENABLE_REALTIME_INGESTION:
+    #         initialize_realtime_service(
+    #             db_name='sample_mflix',
+    #             origin_collection='movies',
+    #             target_vector_collection='srugenai_db.movies',
+    #             mongodb_uri=Config.MONGODB_URI,
+    #             auto_start=True
+    #         )
+    #         print("[App] Real-time ingestion service started")
+    # except Exception as e:
+    #     print(f"[App] Warning: Could not start real-time ingestion service: {e}")
     
     # Root endpoint
     @app.route('/')
