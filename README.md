@@ -1176,14 +1176,4 @@ collection_name: "target_collection"
 - **Filesystem**: Read files from local or network directories
 - **File Upload**: Direct file uploads via API or UI
 
-## Security Notes
 
-- **Never commit `.env` file** to version control
-- Use environment variables for all sensitive data
-- MongoDB connection strings should use SSL/TLS
-- File uploads are validated for type and size
-- API keys should be kept secure and rotated regularly
-
-## License
-
-MIT
