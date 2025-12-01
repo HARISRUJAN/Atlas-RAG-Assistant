@@ -4,7 +4,6 @@ from flask import Blueprint, jsonify
 import requests
 
 from backend.config import Config
-from backend.services.vector_store import VectorStoreService
 
 health_bp = Blueprint('health', __name__)
 
@@ -30,9 +29,13 @@ def health_check():
         try:
             if Config.MONGODB_URI:
                 try:
-                    vector_store = VectorStoreService()
-                    health_status['mongodb'] = vector_store.test_connection()
-                    vector_store.close()
+                    from pymongo import MongoClient
+                    from pymongo.errors import ConnectionFailure
+                    # Simple connection test without VectorStoreService
+                    client = MongoClient(Config.MONGODB_URI, serverSelectionTimeoutMS=5000)
+                    client.admin.command('ping')
+                    health_status['mongodb'] = True
+                    client.close()
                 except Exception as conn_error:
                     health_status['mongodb_error'] = str(conn_error)
                     health_status['mongodb'] = False

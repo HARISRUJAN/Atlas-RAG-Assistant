@@ -7,6 +7,7 @@ from datetime import datetime
 
 from backend.services.origin_sources.base import OriginSource
 from backend.models.origin_source import OriginDocument
+from backend.config import Config
 
 
 class MongoDBOrigin(OriginSource):
@@ -32,6 +33,14 @@ class MongoDBOrigin(OriginSource):
             raise ValueError("database_name is required")
         if not self.collection_name:
             raise ValueError("collection_name is required")
+        
+        # Validate that this is not a semantic collection
+        if Config.is_semantic_collection(self.collection_name):
+            raise ValueError(
+                f"Collection '{self.collection_name}' is a semantic collection. "
+                f"Origin source must use origin collections, not semantic collections. "
+                f"Use the origin collection name instead (e.g., '{Config.get_origin_collection_name(self.collection_name)}')."
+            )
         
         self.client = None
         self._connect()

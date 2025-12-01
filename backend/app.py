@@ -1,5 +1,21 @@
 """Main Flask application."""
 
+import sys
+import io
+
+# Set UTF-8 encoding for stdout/stderr on Windows
+if sys.platform == 'win32':
+    # Reconfigure stdout and stderr to use UTF-8 encoding
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    # Also wrap stdout/stderr with UTF-8 TextIOWrapper if reconfigure not available
+    if not hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if not hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from flask import Flask
 from flask_cors import CORS
 
@@ -20,10 +36,13 @@ def create_app():
                 "http://localhost:5173", 
                 "http://localhost:5174",
                 "http://localhost:5175",
+                "http://localhost:3000",
                 "http://127.0.0.1:5173",
                 "http://127.0.0.1:5174",
                 "http://127.0.0.1:5175",
-                "http://localhost:3000"
+                "http://127.0.0.1:3000",
+                "http://localhost:8080",
+                "http://localhost:5001"
             ],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization", "X-MongoDB-URI", "X-Connection-ID"],
@@ -34,10 +53,13 @@ def create_app():
     # Validate configuration (warn but don't exit)
     try:
         Config.validate()
-    except ValueError as e:
+    except Exception as e:
         print(f"[App] Configuration warning: {e}")
         print("[App] The app will start but some features may not work until configuration is complete.")
         print("[App] Please check your .env file")
+        import traceback
+        if Config.FLASK_DEBUG:
+            traceback.print_exc()
         # Don't exit - let the app start so user can configure via UI
     
     # Register blueprints

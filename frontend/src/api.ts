@@ -255,20 +255,37 @@ export const apiService = {
   },
 
   /**
-   * Ingest document from origin source
+   * Ingest document from origin source (single or batch)
    */
   async ingestFromOrigin(data: {
     origin_source_type: string;
-    origin_id: string;
+    origin_id?: string;
+    origin_ids?: string[];
     origin_source_id?: string;
     connection_config: any;
     skip_duplicates?: boolean;
-  }, mongodbUri?: string): Promise<{ raw_document_id: string; status: string; reason?: string }> {
+  }, mongodbUri?: string): Promise<{ 
+    raw_document_id?: string; 
+    status?: string; 
+    reason?: string;
+    // Batch response fields
+    total?: number;
+    successful?: number;
+    skipped?: number;
+    failed?: number;
+    details?: Array<{
+      origin_id: string;
+      status: 'success' | 'skipped' | 'failed';
+      raw_document_id?: string;
+      reason?: string;
+      error?: string;
+    }>;
+  }> {
     const headers: Record<string, string> = {};
     if (mongodbUri) {
       headers['X-MongoDB-URI'] = mongodbUri;
     }
-    const response = await api.post<{ raw_document_id: string; status: string }>('/ingest/origin', data, { headers });
+    const response = await api.post<any>('/ingest/origin', data, { headers });
     return response.data;
   },
 
@@ -277,6 +294,41 @@ export const apiService = {
    */
   async getIngestionStatus(): Promise<{ status_counts: Record<string, number>; total: number }> {
     const response = await api.get<{ status_counts: Record<string, number>; total: number }>('/ingest/status');
+    return response.data;
+  },
+
+  /**
+   * Ingest documents from MongoDB origin collection to semantic collection
+   */
+  async ingestFromMongoDBOrigin(data: {
+    mode: 'all' | 'since';
+    since_timestamp?: string;
+    skip_duplicates?: boolean;
+    database_name?: string;
+    collection_name?: string;
+    limit?: number;
+  }, mongodbUri?: string): Promise<{
+    message: string;
+    origin_collection: string;
+    semantic_collection: string;
+    total: number;
+    successful: number;
+    skipped: number;
+    failed: number;
+    total_chunks_created: number;
+    details: Array<{
+      origin_id: string;
+      status: 'success' | 'skipped' | 'failed';
+      chunks_created?: number;
+      reason?: string;
+      error?: string;
+    }>;
+  }> {
+    const headers: Record<string, string> = {};
+    if (mongodbUri) {
+      headers['X-MongoDB-URI'] = mongodbUri;
+    }
+    const response = await api.post<any>('/ingest/origin/mongodb', data, { headers });
     return response.data;
   },
 

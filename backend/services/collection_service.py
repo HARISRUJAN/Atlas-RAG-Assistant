@@ -1,6 +1,6 @@
 """Collection service helpers for validation and metadata."""
 
-from typing import Optional
+from typing import Optional, Tuple
 from pymongo import MongoClient
 from backend.config import Config
 
@@ -132,9 +132,10 @@ def has_vector_index(collection_name: str, mongodb_uri: Optional[str] = None) ->
         return False
 
 
-def validate_collection_for_query(collection_name: str, mongodb_uri: Optional[str] = None):
+def validate_collection_for_query(collection_name: str, mongodb_uri: Optional[str] = None) -> Tuple[bool, Optional[str]]:
     """
     Validate that a collection can be used for RAG queries.
+    Only semantic collections can be queried (RAG must use semantic collections).
     
     Args:
         collection_name: Collection name in format "collection" or "database.collection"
@@ -145,11 +146,33 @@ def validate_collection_for_query(collection_name: str, mongodb_uri: Optional[st
         is_valid: True if collection can be queried
         error_message: None if valid, error message if invalid
     """
+    # Parse collection name
+    if '.' in collection_name:
+        parts = collection_name.split('.', 1)
+        db_name = parts[0]
+        coll_name = parts[1]
+    else:
+        db_name = Config.VECTOR_DATA_DATABASE_NAME or Config.MONGODB_DATABASE_NAME
+        coll_name = collection_name
+    
+    # Check if it's a raw document collection
     if is_raw_document_collection(collection_name):
         return False, (
             f"Collection '{collection_name}' is a raw document store and "
-            "cannot be queried directly. Select the corresponding vector "
-            "collection (e.g., 'srugenai_db.movies')."
+            "cannot be queried directly. Use the corresponding semantic collection instead."
+        )
+    
+    # Check if it's a semantic collection (RAG must use semantic collections only)
+    if not Config.is_semantic_collection(coll_name):
+        # Suggest the semantic collection name
+        # coll_name is already confirmed to be non-semantic, so use it directly
+        semantic_coll = Config.get_semantic_collection_name(coll_name)
+        semantic_full_name = f"{db_name}.{semantic_coll}" if '.' in collection_name else semantic_coll
+        
+        return False, (
+            f"Collection '{collection_name}' is an origin collection and cannot be queried directly. "
+            f"RAG queries must use semantic collections. "
+            f"Please use the semantic collection: '{semantic_full_name}'"
         )
     
     if not has_vector_index(collection_name, mongodb_uri):
@@ -172,7 +195,9 @@ def validate_collection_for_query(collection_name: str, mongodb_uri: Optional[st
             f"   - Collection: {coll_name}\n"
             f"   - Use JSON Editor with vector field configuration\n"
             f"4. See CREATE_VECTOR_INDEX_srugenai_db_movies.md for detailed steps\n\n"
-            f"Or run: python setup_vector_index_for_collection.py {collection_name}"
+            f"Or run: python setup_vector_index_for_collection.py {collection_name}\n\n"
+            f"Note: Vector indexes must be created via MongoDB Atlas UI. "
+            f"The script above provides step-by-step instructions."
         )
         return False, error_msg
     

@@ -90,6 +90,22 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
     }
   }, [connectionId, mongodbUri]);
 
+  // Listen for collections refresh events (e.g., after ingestion)
+  useEffect(() => {
+    const handleRefresh = () => {
+      if (connectionId) {
+        fetchConnectionCollections();
+      } else if (mongodbUri && mongodbUri.trim()) {
+        fetchDatabases();
+      }
+    };
+
+    window.addEventListener('collections-refresh', handleRefresh);
+    return () => {
+      window.removeEventListener('collections-refresh', handleRefresh);
+    };
+  }, [connectionId, mongodbUri]);
+
   const handleConnectionIdChange = (newConnectionId: string | null) => {
     setConnectionId(newConnectionId);
     if (propOnConnectionIdChange) {
@@ -461,8 +477,14 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
           <div className="space-y-1">
             {databases.map((database) => {
               const isExpanded = expandedDatabases.has(database.name);
+              // Use metadata if available, otherwise fall back to simple collections list
+              const collectionsWithMetadata = database.collections_metadata || 
+                database.collections.map(name => ({ name, type: 'origin' as const, is_semantic: false }));
+              
               // Filter out raw_documents collections - they are not queryable vector collections
-              const queryableCollections = database.collections.filter(coll => !coll.includes('raw_documents'));
+              const queryableCollections = collectionsWithMetadata.filter(
+                coll => !coll.name.includes('raw_documents')
+              );
               const totalCollections = queryableCollections.length;
               
               return (
@@ -516,7 +538,9 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                   {/* Collections List */}
                   {isExpanded && (
                     <div className="border-t pl-4 pr-2 py-1" style={{ borderColor: 'var(--color-border-muted)' }}>
-                      {queryableCollections.map((collection) => {
+                      {queryableCollections.map((collectionInfo) => {
+                        const collection = typeof collectionInfo === 'string' ? collectionInfo : collectionInfo.name;
+                        const isSemantic = typeof collectionInfo === 'object' ? collectionInfo.is_semantic : collection.endsWith('_semantic');
                         const fullPath = `${database.name}.${collection}`;
                         const isSelected = selectedCollections.has(fullPath);
                         
@@ -559,11 +583,21 @@ const CollectionSelector: React.FC<CollectionSelectorProps> = ({
                               >
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                               </svg>
-                              <span className={`text-xs truncate ${isSelected ? 'font-medium' : ''}`} style={{ 
-                                color: isSelected ? 'var(--color-text-dark)' : 'var(--color-text-muted)'
-                              }}>
-                                {collection}
-                              </span>
+                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                {isSemantic && (
+                                  <span 
+                                    className="text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 font-medium flex-shrink-0" 
+                                    title="Semantic collection (for RAG queries)"
+                                  >
+                                    🔍
+                                  </span>
+                                )}
+                                <span className={`text-xs truncate ${isSelected ? 'font-medium' : ''}`} style={{ 
+                                  color: isSelected ? 'var(--color-text-dark)' : 'var(--color-text-muted)'
+                                }}>
+                                  {collection}
+                                </span>
+                              </div>
                               {connectionProvider && (
                                 <ProviderBadge provider={connectionProvider as any} size="sm" />
                               )}

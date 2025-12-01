@@ -156,6 +156,7 @@ class VectorDataStore:
                     pipeline.insert(0, {"$match": filter_dict})
                 
                 # Project fields
+                # Semantic collections use 'chunk_text', but we also support 'content' for compatibility
                 pipeline.append({
                     "$project": {
                         "_id": 0,
@@ -163,7 +164,8 @@ class VectorDataStore:
                         "document_id": 1,
                         "file_name": 1,
                         "chunk_index": 1,
-                        "content": 1,
+                        "chunk_text": 1,  # Primary field for semantic collections
+                        "content": {"$ifNull": ["$content", "$chunk_text"]},  # Use chunk_text as fallback for content
                         "line_start": 1,
                         "line_end": 1,
                         "metadata": 1,
@@ -179,9 +181,15 @@ class VectorDataStore:
                 if results:
                     print(f"[VectorDataStore] ✓ SUCCESS with index '{index_name}': {len(results)} results")
                     # Log sample result for debugging
-                    if results[0].get('content'):
-                        sample_content = results[0]['content'][:100] + "..." if len(results[0]['content']) > 100 else results[0]['content']
-                        print(f"[VectorDataStore] Sample result content: {sample_content}")
+                    # Check both content and chunk_text fields
+                    sample_content = results[0].get('content') or results[0].get('chunk_text') or ''
+                    if sample_content:
+                        sample_preview = sample_content[:100] + "..." if len(sample_content) > 100 else sample_content
+                        print(f"[VectorDataStore] Sample result content: {sample_preview}")
+                    # Normalize results: ensure 'content' field exists (use chunk_text if content is missing)
+                    for result in results:
+                        if 'content' not in result or not result['content']:
+                            result['content'] = result.get('chunk_text', '')
                     return results
                 else:
                     print(f"[VectorDataStore] Index '{index_name}' exists but returned 0 results")

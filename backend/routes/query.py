@@ -43,9 +43,38 @@ def query_documents():
             [query_request.collection_name] if query_request.collection_name else None
         )
         
-        # If vector_collection is specified, use it for pipeline mode
-        if vector_collection and use_pipeline:
+        # If vector_collection is specified but no collection_names, use it as fallback
+        # Otherwise, use all selected collections (don't override with single vector_collection)
+        if not collection_names and vector_collection and use_pipeline:
             collection_names = [vector_collection]
+            print(f"[Query Route] Using vector_collection as fallback: {vector_collection}")
+        elif collection_names and vector_collection:
+            # If both are provided, prefer collection_names (user's selection)
+            print(f"[Query Route] Using selected collections: {collection_names} (vector_collection {vector_collection} ignored)")
+        
+        # Transform collection names to semantic collections (RAG must use semantic collections)
+        if collection_names:
+            semantic_collection_names = []
+            for coll_name in collection_names:
+                # Check if it's already a semantic collection
+                if Config.is_semantic_collection(coll_name):
+                    semantic_collection_names.append(coll_name)
+                else:
+                    # Transform to semantic collection
+                    # Handle "database.collection" format
+                    if '.' in coll_name:
+                        parts = coll_name.split('.', 1)
+                        if len(parts) == 2:
+                            db_name, coll = parts
+                            semantic_coll = Config.get_semantic_collection_name(coll)
+                            semantic_collection_names.append(f"{db_name}.{semantic_coll}")
+                        else:
+                            semantic_collection_names.append(Config.get_semantic_collection_name(coll_name))
+                    else:
+                        semantic_collection_names.append(Config.get_semantic_collection_name(coll_name))
+            
+            collection_names = semantic_collection_names
+            print(f"[Query Route] Transformed to semantic collections: {collection_names}")
         
         # Validate collections before querying
         if collection_names:

@@ -16,7 +16,9 @@ def get_default_mongodb_uri():
         JSON response with default MongoDB URI (masked)
     """
     try:
-        if Config.MONGODB_URI:
+        # Ensure Config is loaded
+        mongodb_uri = Config.MONGODB_URI
+        if mongodb_uri:
             # Mask the URI for security - show format but hide credentials
             uri = Config.MONGODB_URI
             # If it's a mongodb+srv:// URI, mask the password
@@ -53,17 +55,22 @@ def get_default_mongodb_uri():
                     masked_uri = uri
             
             return jsonify({
-                'default_uri': Config.MONGODB_URI,  # Return full URI for use in app
+                'default_uri': mongodb_uri,  # Return full URI for use in app
                 'masked_uri': masked_uri  # Masked version for display
             }), 200
         else:
             return jsonify({
-                'error': 'MongoDB URI not configured'
-            }), 404
+                'error': 'MongoDB URI not configured',
+                'default_uri': None,
+                'masked_uri': None
+            }), 200  # Return 200 with error message instead of 404
     except Exception as e:
         import traceback
-        traceback.print_exc()
+        error_trace = traceback.format_exc()
+        print(f"[Config Route] ERROR: {str(e)}")
+        print(error_trace)
         return jsonify({
-            'error': f'Error getting MongoDB URI: {str(e)}'
+            'error': f'Error getting MongoDB URI: {str(e)}',
+            'details': 'Please check backend logs for more information.'
         }), 500
 

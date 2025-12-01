@@ -81,36 +81,24 @@ function App() {
       setTimeout(() => setQueryStatus('generating-answer'), 800);
       
       // selectedCollections contains collection names in format "database.collection"
-      const collectionNames = selectedCollections.size > 0 
-        ? Array.from(selectedCollections) 
-        : undefined;
+      const collections = Array.from(selectedCollections);
+      // Filter out raw_documents - they are not vector collections
+      const validCollections = collections.filter(c => !c.includes('raw_documents'));
+      
+      if (validCollections.length === 0) {
+        throw new Error('No valid vector collections selected. Please select a collection with vector embeddings (not raw_documents).');
+      }
+      
+      const collectionNames = validCollections.length > 0 ? validCollections : undefined;
       // Use connection_id if available, otherwise fall back to mongodbUri
       const connectionIds = connectionId ? [connectionId] : undefined;
       
-      // Use the first selected collection as vector_collection for pipeline mode
-      // Format should be "database.collection" (e.g., "srugenai_db.movies")
-      // Filter out raw_documents and prefer vector collections
-      let vectorCollection: string | undefined = undefined;
-      if (selectedCollections.size > 0) {
-        const collections = Array.from(selectedCollections);
-        // Filter out raw_documents - they are not vector collections
-        const validCollections = collections.filter(c => !c.includes('raw_documents'));
-        
-        if (validCollections.length === 0) {
-          throw new Error('No valid vector collections selected. Please select a collection with vector embeddings (not raw_documents).');
-        }
-        
-        // Try to find srugenai_db collection first (excluding raw_documents)
-        const srugenaiCollection = validCollections.find(c => 
-          c.startsWith('srugenai_db.') && !c.includes('raw_documents')
-        );
-        vectorCollection = srugenaiCollection || validCollections[0];
-        console.log('[App] Selected vector collection for query:', vectorCollection);
-        console.log('[App] All selected collections:', collections);
-        console.log('[App] Valid vector collections:', validCollections);
-      }
+      // Don't pass vectorCollection - let backend use all selected collections
+      console.log('[App] Selected collections for query:', collectionNames);
+      console.log('[App] All selected collections:', collections);
+      console.log('[App] Valid vector collections:', validCollections);
       
-      const queryResponse = await apiService.query(query, 5, collectionNames, connectionIds, mongodbUri, vectorCollection);
+      const queryResponse = await apiService.query(query, 5, collectionNames, connectionIds, mongodbUri, undefined);
       setResponse(queryResponse);
       setQueryStatus('complete');
       

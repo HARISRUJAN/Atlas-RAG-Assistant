@@ -48,6 +48,13 @@ export interface Collection {
 export interface Database {
   name: string;
   collections: string[];
+  collections_metadata?: Array<{
+    name: string;
+    type: 'origin' | 'semantic';
+    is_semantic: boolean;
+    size?: number;
+    count?: number;
+  }>;
 }
 
 export interface DatabasesResponse {

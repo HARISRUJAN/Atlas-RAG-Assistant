@@ -130,15 +130,43 @@ def list_collections():
             collection_names = db.list_collection_names()
             
             # Filter out system collections
-            filtered_collections = [
-                name for name in collection_names 
-                if not name.startswith('system.')
-            ]
+            filtered_collections = []
+            for name in collection_names:
+                if not name.startswith('system.'):
+                    # Determine collection type
+                    is_semantic = Config.is_semantic_collection(name)
+                    collection_info = {
+                        'name': name,
+                        'type': 'semantic' if is_semantic else 'origin',
+                        'is_semantic': is_semantic
+                    }
+                    
+                    # Try to get collection stats for sorting (newest first)
+                    try:
+                        coll = db[name]
+                        stats = db.command('collStats', name)
+                        # Use storageSize as proxy for "recently modified" (newer = larger if recently created)
+                        collection_info['size'] = stats.get('size', 0)
+                        # Get document count
+                        collection_info['count'] = stats.get('count', 0)
+                    except:
+                        # If stats fail, just use name for sorting
+                        collection_info['size'] = 0
+                        collection_info['count'] = 0
+                    
+                    filtered_collections.append(collection_info)
+            
+            # Sort collections: semantic collections first, then by size (newest/modified first)
+            filtered_collections.sort(key=lambda x: (
+                not x['is_semantic'],  # Semantic collections first
+                -x['size']  # Larger size = more recent activity
+            ))
             
             if filtered_collections:  # Only include databases with collections
                 databases.append({
                     'name': db_name,
-                    'collections': filtered_collections
+                    'collections': [c['name'] for c in filtered_collections],  # Keep simple format for backward compatibility
+                    'collections_metadata': filtered_collections  # New: detailed metadata
                 })
         
         client.close()
@@ -161,7 +189,14 @@ def list_collections():
             )
         return jsonify({'error': error_msg}), 500
     except Exception as e:
-        return jsonify({'error': f'Error listing collections: {str(e)}'}), 500
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"[Collections Route] ERROR: {str(e)}")
+        print(error_trace)
+        return jsonify({
+            'error': f'Error listing collections: {str(e)}',
+            'details': 'Please check backend logs for more information.'
+        }), 500
 
 
 @collections_bp.route('/collections/<path:collection_path>/questions', methods=['GET'])

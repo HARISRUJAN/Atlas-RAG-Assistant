@@ -13,6 +13,40 @@ from backend.services.unified_vector_store import UnifiedVectorStore
 class RAGService:
     """Service for Retrieval-Augmented Generation."""
     
+    @staticmethod
+    def _ensure_semantic_collection(collection_name: Optional[str]) -> Optional[str]:
+        """
+        Ensure collection name is a semantic collection.
+        If origin collection is provided, transform it to semantic collection.
+        
+        Args:
+            collection_name: Collection name (can be "collection" or "database.collection")
+            
+        Returns:
+            Semantic collection name
+        """
+        if not collection_name:
+            return None
+        
+        # Handle "database.collection" format
+        if '.' in collection_name:
+            parts = collection_name.split('.', 1)
+            if len(parts) == 2:
+                db_name, coll_name = parts
+                # Check if collection is already semantic
+                if Config.is_semantic_collection(coll_name):
+                    return collection_name
+                # Transform to semantic
+                semantic_coll = Config.get_semantic_collection_name(coll_name)
+                return f"{db_name}.{semantic_coll}"
+        
+        # Single collection name
+        if Config.is_semantic_collection(collection_name):
+            return collection_name
+        
+        # Transform to semantic
+        return Config.get_semantic_collection_name(collection_name)
+    
     def __init__(self, collection_name: str = None, collection_names: List[str] = None, database_name: str = None, index_name: str = None, mongodb_uri: str = None, connection_ids: List[str] = None, use_pipeline: bool = True):
         """
         Initialize RAG service.
@@ -61,13 +95,16 @@ class RAGService:
             elif collection_name:
                 target_collection = collection_name
             
+            # Ensure we're using semantic collection (transform if needed)
+            target_collection = self._ensure_semantic_collection(target_collection)
+            
             self.vector_data_store = VectorDataStore(
                 database_name=database_name,
                 collection_name=target_collection,  # Can be "collection" or "database.collection"
                 index_name=index_name or Config.VECTOR_DATA_INDEX_NAME,
                 mongodb_uri=mongodb_uri
             )
-            print(f"[RAG Service] Using pipeline mode with vector_data collection: {target_collection or 'default'}")
+            print(f"[RAG Service] Using pipeline mode with semantic collection: {target_collection or 'default'}")
         # Determine which collections to use (legacy MongoDB mode)
         elif collection_names:
             # Multi-collection mode
@@ -77,10 +114,12 @@ class RAGService:
             print(f"[RAG Service] Initializing multi-collection mode with {len(collection_names)} collection(s)")
             
             for coll_name in collection_names:
-                print(f"[RAG Service] Setting up vector store for collection: '{coll_name}'")
+                # Ensure we're using semantic collection
+                semantic_coll_name = self._ensure_semantic_collection(coll_name)
+                print(f"[RAG Service] Setting up vector store for semantic collection: '{semantic_coll_name}' (from '{coll_name}')")
                 try:
                     vector_store = VectorStoreService(
-                        collection_name=coll_name,
+                        collection_name=semantic_coll_name,
                         database_name=database_name,
                         index_name=index_name,
                         mongodb_uri=mongodb_uri
@@ -394,7 +433,7 @@ class RAGService:
                 'chunk_id': result.get('chunk_id', ''),
                 'document_id': result.get('document_id', ''),
                 'file_name': result.get('file_name') or 'Unknown',
-                'content': result.get('content') or '',
+                'content': result.get('content') or result.get('chunk_text') or '',
                 'line_start': result.get('line_start') or 0,
                 'line_end': result.get('line_end') or 0,
                 'metadata': result.get('metadata') or {},
@@ -453,7 +492,7 @@ class RAGService:
             file_name = result.get('file_name', 'Unknown')
             line_start = result.get('line_start', 0)
             line_end = result.get('line_end', 0)
-            content = result.get('content', '')
+            content = result.get('content') or result.get('chunk_text') or ''
             
             context_parts.append(
                 f"[Source {idx}: {file_name}, lines {line_start}-{line_end}]\n{content}\n"
@@ -545,7 +584,7 @@ Answer: Provide a clear, concise answer based on the context above. If you refer
             print(f"[RAG Service] Sample search result fields: {list(first_result.keys())}")
             print(f"[RAG Service] Sample result values: file_name='{first_result.get('file_name')}', "
                   f"line_start={first_result.get('line_start')}, line_end={first_result.get('line_end')}, "
-                  f"content_length={len(first_result.get('content', ''))}")
+                  f"content_length={len(first_result.get('content') or first_result.get('chunk_text') or '')}")
         
         for idx, result in enumerate(search_results):
             # Helper function to safely extract field with proper default handling

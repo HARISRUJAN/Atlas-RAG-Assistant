@@ -65,6 +65,12 @@ class RawDocumentStore:
         
         # Create indexes
         self._ensure_indexes()
+        
+        # Cache for semantic collection indexes (to avoid repeated index creation)
+        self._semantic_indexes_ensured = set()
+        
+        # Cache for semantic collection indexes (to avoid repeated index creation)
+        self._semantic_indexes_ensured = set()
     
     def _ensure_indexes(self):
         """Ensure required indexes exist."""
@@ -127,13 +133,90 @@ class RawDocumentStore:
             
         Returns:
             The raw_document_id
+            
+        Raises:
+            Exception: If storage fails (including duplicate key errors)
         """
         try:
             doc_dict = raw_doc.to_dict()
             result = self.collection.insert_one(doc_dict)
             return raw_doc.raw_document_id
-        except Exception as e:
+        except OperationFailure as e:
+            error_str = str(e)
+            # Check for duplicate key error (E11000)
+            if 'E11000' in error_str or 'duplicate key' in error_str.lower():
+                print(f"[RawDocumentStore] Duplicate key error for origin_id: {raw_doc.origin_id}")
+                # Try to get existing document
+                existing = self.get_raw_document_by_origin_id(raw_doc.origin_id, raw_doc.origin_source_type)
+                if existing:
+                    print(f"[RawDocumentStore] Document with origin_id '{raw_doc.origin_id}' already exists: {existing.raw_document_id}")
+                    return existing.raw_document_id
+                # If we can't find it, raise a user-friendly error
+                raise ValueError(f"Document with origin_id '{raw_doc.origin_id}' already exists in the system")
+            # Transform other MongoDB errors to user-friendly messages
+            if 'timeout' in error_str.lower():
+                raise ConnectionError("Database operation timed out. Please try again.")
             print(f"[RawDocumentStore] Error storing raw document: {e}")
+            raise ValueError(f"Failed to store document: {error_str}")
+        except Exception as e:
+            error_str = str(e)
+            # Don't double-wrap ValueError
+            if isinstance(e, ValueError):
+                raise
+            print(f"[RawDocumentStore] Error storing raw document: {error_str}")
+            raise ValueError(f"Failed to store document: {error_str}")
+    
+    def store_raw_document_upsert(self, raw_doc: RawDocument) -> Dict[str, Any]:
+        """
+        Store a raw document using upsert pattern (atomic duplicate handling).
+        This method is idempotent - safe to retry.
+        
+        Args:
+            raw_doc: RawDocument instance
+            
+        Returns:
+            Dictionary with:
+                - raw_document_id: The raw document ID
+                - was_inserted: True if document was inserted, False if updated
+                - was_duplicate: True if document already existed
+        """
+        try:
+            doc_dict = raw_doc.to_dict()
+            
+            # Use replace_one with upsert=True, filtering by origin_id
+            # This makes the operation atomic and idempotent
+            filter_query = {'origin_id': raw_doc.origin_id}
+            if raw_doc.origin_source_type:
+                filter_query['origin_source_type'] = raw_doc.origin_source_type
+            
+            result = self.collection.replace_one(
+                filter_query,
+                doc_dict,
+                upsert=True
+            )
+            
+            was_inserted = result.upserted_id is not None
+            was_duplicate = not was_inserted
+            
+            if was_inserted:
+                print(f"[RawDocumentStore] Inserted new raw document: {raw_doc.raw_document_id} (origin_id: {raw_doc.origin_id})")
+            else:
+                # Document was updated/replaced, get the existing raw_document_id
+                existing = self.get_raw_document_by_origin_id(raw_doc.origin_id, raw_doc.origin_source_type)
+                if existing:
+                    # Use existing raw_document_id instead of the new one
+                    raw_doc.raw_document_id = existing.raw_document_id
+                    print(f"[RawDocumentStore] Updated existing raw document: {existing.raw_document_id} (origin_id: {raw_doc.origin_id})")
+                else:
+                    print(f"[RawDocumentStore] Upserted document but couldn't retrieve it (origin_id: {raw_doc.origin_id})")
+            
+            return {
+                'raw_document_id': raw_doc.raw_document_id,
+                'was_inserted': was_inserted,
+                'was_duplicate': was_duplicate
+            }
+        except Exception as e:
+            print(f"[RawDocumentStore] Error in store_raw_document_upsert: {e}")
             raise
     
     def get_raw_document_by_origin_id(self, origin_id: str, origin_source_type: Optional[str] = None) -> Optional[RawDocument]:
@@ -297,6 +380,177 @@ class RawDocumentStore:
         except Exception as e:
             print(f"[RawDocumentStore] Error counting by status: {e}")
             return {}
+    
+    def get_semantic_collection(self, origin_collection_name: Optional[str] = None, origin_db_name: Optional[str] = None):
+        """
+        Get or create semantic collection reference.
+        
+        Args:
+            origin_collection_name: Origin collection name. Defaults to Config.ORIGIN_COLLECTION_NAME
+            origin_db_name: Origin database name. Defaults to Config.ORIGIN_DB_NAME or self.database_name
+            
+        Returns:
+            MongoDB collection object for semantic collection
+        """
+        origin_collection = origin_collection_name or Config.ORIGIN_COLLECTION_NAME
+        origin_db = origin_db_name or Config.ORIGIN_DB_NAME or self.database_name
+        
+        semantic_collection_name = Config.get_semantic_collection_name(origin_collection)
+        semantic_db = self.client[origin_db]
+        semantic_collection = semantic_db[semantic_collection_name]
+        
+        # Ensure indexes exist on semantic collection
+        self._ensure_semantic_indexes(semantic_collection)
+        
+        return semantic_collection
+    
+    def _ensure_semantic_indexes(self, semantic_collection):
+        """
+        Ensure required indexes exist on semantic collection.
+        This method is idempotent and uses caching to avoid repeated calls.
+        
+        Args:
+            semantic_collection: MongoDB collection object for semantic collection
+        """
+        # Create cache key from collection full name
+        collection_key = f"{semantic_collection.database.name}.{semantic_collection.name}"
+        
+        # Check cache to avoid repeated index creation
+        if collection_key in self._semantic_indexes_ensured:
+            return  # Indexes already ensured for this collection
+        
+        try:
+            # Regular indexes for querying
+            try:
+                semantic_collection.create_index('origin_id')
+                print(f"[RawDocumentStore] Created index on origin_id in semantic collection {collection_key}")
+            except OperationFailure as e:
+                if 'already exists' not in str(e).lower():
+                    print(f"[RawDocumentStore] Warning: Could not create index on origin_id: {e}")
+            
+            try:
+                semantic_collection.create_index('chunk_id')
+                print(f"[RawDocumentStore] Created index on chunk_id in semantic collection {collection_key}")
+            except OperationFailure as e:
+                if 'already exists' not in str(e).lower():
+                    print(f"[RawDocumentStore] Warning: Could not create index on chunk_id: {e}")
+            
+            # Compound index for (origin_id, chunk_id) uniqueness
+            try:
+                semantic_collection.create_index([('origin_id', 1), ('chunk_id', 1)], unique=True)
+                print(f"[RawDocumentStore] Created unique compound index on (origin_id, chunk_id) in semantic collection {collection_key}")
+            except OperationFailure as e:
+                if 'already exists' not in str(e).lower() and 'duplicate key' not in str(e).lower():
+                    print(f"[RawDocumentStore] Warning: Could not create unique index on (origin_id, chunk_id): {e}")
+            
+            # Mark as ensured in cache
+            self._semantic_indexes_ensured.add(collection_key)
+            
+            # Note: Vector index on 'embedding' field must be created via MongoDB Atlas UI or admin script
+            # This is not done here as it requires specific Atlas Vector Search configuration
+            print(f"[RawDocumentStore] Note: Vector index on 'embedding' field must be created via MongoDB Atlas UI or migration script")
+            
+        except Exception as e:
+            print(f"[RawDocumentStore] Warning: Could not create semantic indexes: {e}")
+            # Don't add to cache if there was an error, so we can retry
+    
+    def store_semantic_chunk_upsert(
+        self,
+        origin_id: str,
+        chunk_id: str,
+        chunk_text: str,
+        embedding: List[float],
+        metadata: Optional[Dict[str, Any]] = None,
+        origin_collection_name: Optional[str] = None,
+        origin_db_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Store a semantic chunk using upsert pattern (atomic duplicate handling).
+        This method is idempotent - safe to retry.
+        
+        Args:
+            origin_id: Origin document ID
+            chunk_id: Chunk identifier (deterministic per document)
+            chunk_text: Text content of the chunk
+            embedding: Vector embedding for the chunk
+            metadata: Optional metadata dictionary
+            origin_collection_name: Origin collection name. Defaults to Config.ORIGIN_COLLECTION_NAME
+            origin_db_name: Origin database name. Defaults to Config.ORIGIN_DB_NAME or self.database_name
+            
+        Returns:
+            Dictionary with:
+                - doc_id: The document ID used
+                - was_inserted: True if document was inserted, False if updated
+                - was_duplicate: True if document already existed
+        """
+        try:
+            semantic_collection = self.get_semantic_collection(origin_collection_name, origin_db_name)
+            
+            # Create unique document ID
+            doc_id = f"{origin_id}:{chunk_id}"
+            
+            # Prepare document
+            doc = {
+                '_id': doc_id,
+                'origin_id': origin_id,
+                'chunk_id': chunk_id,
+                'chunk_text': chunk_text,
+                'embedding': embedding,
+                'metadata': metadata or {},
+            }
+            
+            # Use replace_one with upsert=True for idempotency
+            result = semantic_collection.replace_one(
+                {'_id': doc_id},
+                doc,
+                upsert=True
+            )
+            
+            was_inserted = result.upserted_id is not None
+            was_duplicate = not was_inserted
+            
+            if was_inserted:
+                print(f"[RawDocumentStore] Inserted new semantic chunk: {doc_id}")
+            else:
+                print(f"[RawDocumentStore] Updated existing semantic chunk: {doc_id}")
+            
+            return {
+                'doc_id': doc_id,
+                'was_inserted': was_inserted,
+                'was_duplicate': was_duplicate
+            }
+        except Exception as e:
+            print(f"[RawDocumentStore] Error in store_semantic_chunk_upsert: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+    
+    def has_semantic_chunks(self, origin_id: str, origin_collection_name: Optional[str] = None, origin_db_name: Optional[str] = None) -> bool:
+        """
+        Check if an origin document already has semantic chunks.
+        
+        Uses the same key strategy as store_semantic_chunk_upsert():
+        - Queries by origin_id (chunks are stored with _id = "{origin_id}:{chunk_id}")
+        - This matches the storage pattern exactly
+        
+        Args:
+            origin_id: Origin document ID
+            origin_collection_name: Origin collection name. Defaults to Config.ORIGIN_COLLECTION_NAME
+            origin_db_name: Origin database name. Defaults to Config.ORIGIN_DB_NAME or self.database_name
+            
+        Returns:
+            True if semantic chunks exist for this origin_id
+        """
+        try:
+            semantic_collection = self.get_semantic_collection(origin_collection_name, origin_db_name)
+            # Query by origin_id - this matches how chunks are stored
+            # Chunks have _id = "{origin_id}:{chunk_id}" and also have origin_id field
+            # Using origin_id field query is efficient with the index we create
+            count = semantic_collection.count_documents({'origin_id': origin_id})
+            return count > 0
+        except Exception as e:
+            print(f"[RawDocumentStore] Error checking for semantic chunks: {e}")
+            return False
     
     def close(self):
         """Close MongoDB connection."""
