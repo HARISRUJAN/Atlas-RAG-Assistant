@@ -302,7 +302,7 @@ mongo_rag/
 - Select a collection from the left sidebar
 - Enter your question in the query input
 - View the answer with source citations
-- Suggested questions are generated based on collection content
+- Suggested questions are generated based on the collection content
 
 ### 4. Browse Collections
 
@@ -381,15 +381,3 @@ mongo_rag/
 | **Frontend** | React + TypeScript + Vite |
 | **Styling** | Tailwind CSS |
 | **Document Processing** | PyPDF2, python-docx, markdown |
-
-## Security Notes
-
-- **Never commit `.env` file** to version control
-- Use environment variables for all sensitive data
-- MongoDB connection strings should use SSL/TLS
-- File uploads are validated for type and size
-- API keys should be kept secure and rotated regularly
-
-## License
-
-MIT
